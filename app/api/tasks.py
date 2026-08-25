@@ -5,17 +5,9 @@ from sqlalchemy.orm import session
 from sqlalchemy import select
 
 from app.db import get_db
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskResponse
-from enum import Enum
-
-class TaskStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    SUCCESS = "success"
-    FAILED = "failed"
-    RETRYING = "retrying"
-    CANCELLED = "cancelled"
+from app.tasks.executor import execute_task
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -33,6 +25,14 @@ def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
+
+    if db_task.scheduled_at:
+        # 指定時間執行
+        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at) 
+    else:
+        # 立即執行
+        execute_task.delay(str(db_task.id))
+
     return db_task
 
 # 取得所有任務

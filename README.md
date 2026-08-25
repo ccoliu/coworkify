@@ -32,9 +32,17 @@ flowchart TD
     Worker -->|4. 更新狀態與日誌| DB
 ```
 
+## 📦 內建支援的任務類型 (Supported Task Handlers)
+
+| 任務類型 (task_type) | 說明 |
+| :--- | :--- |
+| `echo` | 簡單回聲任務，用於測試系統連通性 |
+| `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
+| `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
+
 ## 使用方式 
 
-## 配置需求
+### 配置需求
 - Python 3.11 or above
 - Docker
 
@@ -51,5 +59,25 @@ uvicorn app.main:app --reload
 
 ### 啟動 Celery Worker
 ```bash
-uvicorn app.worker:celery --loglevel=info
+# 一般啟動 (Windows 環境加上 --pool=solo)
+celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo
+
+# 或使用 watchfiles 啟動 (支援程式碼存檔自動熱重載)
+watchfiles "celery -A app.celery_app.celery_app worker --loglevel=info --pool=solo" app
 ```
+
+## 📖 互動式 API 文件 (Swagger UI)
+啟動後可開啟瀏覽器存取 Swagger UI 進行線上 API 測試：
+
+- 🌐 **API 文件**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+### 主要 API 端點
+| Method | Endpoint | 說明 |
+| :--- | :--- | :--- |
+| `POST` | `/tasks/` | 建立並自動派發任務 (支援立即或指定 `scheduled_at` 排程) |
+| `GET` | `/tasks/` | 分頁查詢任務列表 (支援狀態/類型篩選與優先級排序) |
+| `GET` | `/tasks/{task_id}` | 查詢單一任務詳細狀態與回傳結果 |
+| `GET` | `/tasks/{task_id}/logs` | 查詢特定任務的歷史執行與重試日誌 |
+| `DELETE` | `/tasks/{task_id}` | 刪除指定任務 |
+| `GET` | `/health` | API 伺服器健康檢查 |
+---

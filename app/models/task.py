@@ -5,6 +5,16 @@ from sqlalchemy import UUID, String, DateTime, JSON, Integer, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
+from enum import Enum
+
+class TaskStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    RETRYING = "retrying"
+    CANCELLED = "cancelled"
+
 class Task(Base):
     __tablename__ = "tasks"
 
