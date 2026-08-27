@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.db import engine, Base
 import app.models
 from app.api.tasks import router as tasks_router
+from app.api.ws import router as ws_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -18,6 +19,7 @@ app = FastAPI(
 )
 
 app.include_router(tasks_router)
+app.include_router(ws_router)
 
 @app.get("/health")
 def health_check():

@@ -8,8 +8,10 @@ from app.db import get_db
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskResponse
 from app.tasks.executor import execute_task
+from app.core.security import verify_api_key
+from app.core.rate_limit import RateLimiter
 
-router = APIRouter(prefix="/tasks", tags=["Tasks"])
+router = APIRouter(prefix="/tasks", tags=["Tasks"], dependencies=[Depends(verify_api_key), Depends(RateLimiter(times=3, seconds=10))])
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
@@ -28,10 +30,10 @@ def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
 
     if db_task.scheduled_at:
         # 指定時間執行
-        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at) 
+        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at, priority=db_task.priority) 
     else:
         # 立即執行
-        execute_task.delay(str(db_task.id))
+        execute_task.apply_async(args=[str(db_task.id)], priority=db_task.priority)
 
     return db_task
 

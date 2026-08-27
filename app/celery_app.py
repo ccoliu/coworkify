@@ -25,5 +25,11 @@ celery_app.conf.update(
     result_serializer="json", # 回傳 JSON
     timezone="Asia/Taipei", # 使用台灣時區
     enable_utc=True, # 啟用 UTC
-    task_track_started = True # 追蹤任務開始狀態
+    task_track_started = True, # 追蹤任務開始狀態
+    worker_prefetch_multiplier=1, # 一次只抓取一個任務
+    broker_transport_options={
+        "priority_steps": list(range(10)),
+        "sep": ":", # 區分優先級與任務名稱
+        "queue_order_strategy": "priority"
+    }
 )

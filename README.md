@@ -18,7 +18,8 @@
 - ⏱️ **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
 - 🛡️ **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與退避策略 (Backoff Strategy)。
 - 📊 **端到端可觀測性**：紀錄任務執行耗時、錯誤堆疊 (Traceback) 與工作節點狀態。
-
+- ⚡ **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播。
+- 🔒 **API 金鑰認證**：支援 X-API-Key Header 進行 API 存取認證。
 ---
 
 ## 🏗️ 系統架構 (System Architecture)
@@ -80,4 +81,5 @@ watchfiles "celery -A app.celery_app.celery_app worker --loglevel=info --pool=so
 | `GET` | `/tasks/{task_id}/logs` | 查詢特定任務的歷史執行與重試日誌 |
 | `DELETE` | `/tasks/{task_id}` | 刪除指定任務 |
 | `GET` | `/health` | API 伺服器健康檢查 |
+| `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 ---
