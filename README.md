@@ -83,3 +83,18 @@ watchfiles "celery -A app.celery_app.celery_app worker --loglevel=info --pool=so
 | `GET` | `/health` | API 伺服器健康檢查 |
 | `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 ---
+
+## 📊 壓力測試報告 (Benchmark Results)
+使用 **Locust** 進行高併發負載測試，模擬多用戶並發讀寫請求（包含資料庫查詢、任務建立與 Redis 佇列派發）：
+- **總測試請求數**：35,987 Requests
+- **失敗率**：**0.0% (0 Failures)**
+- **系統吞吐量 (Throughput)**：**288.15 RPS**
+- **平均延遲 (Average Latency)**：**38.9 ms**
+- **P95 延遲**：**100 ms**
+- **中位數延遲 (Median)**：**24 ms**
+
+| API 端點 | 請求類型 | 平均延遲 (ms) | 吞吐量 (RPS) | 失敗率 |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET /health` | 健康檢查 | 9.3 ms | 48.8 RPS | 0% |
+| `GET /tasks` | 資料庫分頁查詢 | 26.5 ms | 145.0 RPS | 0% |
+| `POST /tasks` | 任務建立 + 佇列派發 | 73.4 ms | 94.3 RPS | 0% |

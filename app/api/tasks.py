@@ -11,7 +11,7 @@ from app.tasks.executor import execute_task
 from app.core.security import verify_api_key
 from app.core.rate_limit import RateLimiter
 
-router = APIRouter(prefix="/tasks", tags=["Tasks"], dependencies=[Depends(verify_api_key), Depends(RateLimiter(times=3, seconds=10))])
+router = APIRouter(prefix="/tasks", tags=["Tasks"], dependencies=[Depends(verify_api_key), Depends(RateLimiter(times=5000, seconds=1))])
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 def create_task(task_in: TaskCreate, db: session = Depends(get_db)):

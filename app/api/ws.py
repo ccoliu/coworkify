@@ -20,13 +20,20 @@ async def websocket_tasks_endpoint(websocket: WebSocket):
     await pubsub.subscribe("task_updates")
     
     try:
-        # 持續監聽 Redis 訊息並即時推送到 WebSocket
-        async for message in pubsub.listen():
-            if message['type'] == 'message':
+        while True:
+            # 設定 1 秒超時，避免阻塞
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            # 處理接收到的訊息
+            if message:
+                # 發送訊息至 WebSocket 客戶端
                 await websocket.send_text(message['data'])
-    except WebSocketDisconnect:
+            # 避免 CPU 使用率過高
+            await asyncio.sleep(0.1) 
+            
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     finally:
         await pubsub.unsubscribe("task_updates")
+        await pubsub.close()
         await redis_sub.close()
 
