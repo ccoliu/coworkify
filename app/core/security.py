@@ -11,7 +11,7 @@ API_KEY_NAME = "X-API-Key" # metadata
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 #讀取允許的 API Keys
-ALLOWED_API_KEYS = set(os.getenv("API_KEYS", "coworkify_secret_key_123").split(","))
+ALLOWED_API_KEYS = {k.strip() for k in os.getenv("API_KEYS", "changeme_local_dev_key").split(",") if k.strip()}
 
 def verify_api_key(api_key: str = Security(api_key_header)):
     if not api_key:

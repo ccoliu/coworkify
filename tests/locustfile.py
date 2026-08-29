@@ -8,7 +8,7 @@ class CoworkifyUser(HttpUser):
     def on_start(self):
          """每個虛擬用戶啟動時設定 API Key Header"""
          self.headers = {
-            "X-API-Key": "coworkify_secret_key_123",
+            "X-API-Key": "changeme_local_dev_key",
             "Content-Type": "application/json"
          }
     

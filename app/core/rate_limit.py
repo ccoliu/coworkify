@@ -1,7 +1,7 @@
 import time
 import uuid
 import os
-import redis
+import redis.asyncio as redis
 from fastapi import Request, HTTPException, status
 from dotenv import load_dotenv
 from pathlib import Path
@@ -36,7 +36,7 @@ class RateLimiter:
         pipe = redis_client.pipeline()
         pipe.zremrangebyscore(rate_key, 0, window_start) # 移除視窗外的舊請求
         pipe.zcard(rate_key) # 計算當前請求次數
-        _, current_requests = pipe.execute()
+        _, current_requests = await pipe.execute()
 
         if current_requests >= self.times:
             retry_after = int(self.seconds)
@@ -49,7 +49,7 @@ class RateLimiter:
         pipe = redis_client.pipeline()
         pipe.zadd(rate_key, {req_id: now})
         pipe.expire(rate_key, self.seconds * 2) # 到期自動刪除
-        pipe.execute()
+        await pipe.execute()
 
         return
     

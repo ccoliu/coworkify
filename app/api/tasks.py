@@ -51,7 +51,7 @@ def get_tasks(
         stmt = stmt.where(Task.status == status)
     if task_type:
         stmt = stmt.where(Task.task_type == task_type)
-    stmt = stmt.order_by(Task.priority.desc()).limit(limit).offset(offset)
+    stmt = stmt.order_by(Task.created_at.desc(), Task.priority.desc()).limit(limit).offset(offset)
     tasks = db.scalars(stmt).all()
     return tasks
 

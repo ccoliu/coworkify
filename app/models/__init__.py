@@ -7,4 +7,6 @@ __all__ = [
     "Task",
     "Worker",
     "TaskLog",
+    "Workflow",
+    "WorkflowStep"
 ]
