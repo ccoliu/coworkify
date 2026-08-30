@@ -6,10 +6,11 @@ import { ConnectionIndicator } from './ConnectionIndicator'
 const NAV_ITEMS = [
   { to: '/', label: 'Tasks', end: true },
   { to: '/ops', label: 'Ops', end: false },
+  { to: '/workflows', label: 'Workflows', end: false },
 ]
 
 export function Layout() {
-  const { apiKey, logout } = useAuth()
+  const { user, logout } = useAuth()
 
   return (
     <div className="min-h-screen bg-plane">
@@ -43,9 +44,7 @@ export function Layout() {
           <div className="mt-auto flex flex-col gap-3 px-2 pt-6 text-xs text-ink-muted">
             <ConnectionIndicator />
             <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
-              <span className="truncate font-mono" title={apiKey ?? ''}>
-                {apiKey ? `${apiKey.slice(0, 10)}…` : 'no key'}
-              </span>
+              <span className="truncate font-medium text-ink-secondary">{user?.username}</span>
               <button
                 onClick={logout}
                 className="shrink-0 font-medium text-ink-secondary hover:text-ink"

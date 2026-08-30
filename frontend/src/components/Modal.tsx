@@ -6,9 +6,10 @@ interface ModalProps {
   onClose: () => void
   children: ReactNode
   footer?: ReactNode
+  wide?: boolean
 }
 
-export function Modal({ title, onClose, children, footer }: ModalProps) {
+export function Modal({ title, onClose, children, footer, wide }: ModalProps) {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -24,7 +25,7 @@ export function Modal({ title, onClose, children, footer }: ModalProps) {
         onClick={onClose}
         aria-hidden
       />
-      <div className="relative z-10 w-full max-w-lg rounded-xl border border-border bg-surface shadow-xl">
+      <div className={`relative z-10 w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-xl border border-border bg-surface shadow-xl`}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="text-base font-semibold text-ink">{title}</h2>
           <button

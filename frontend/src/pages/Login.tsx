@@ -6,22 +6,28 @@ import { Input, Label } from '../components/Field'
 import { useAuth } from '../context/AuthContext'
 
 export function Login() {
-  const { login } = useAuth()
+  const { login, register } = useAuth()
   const navigate = useNavigate()
-  const [key, setKey] = useState('')
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
-    if (!key.trim()) return
+    if (!username.trim() || !password) return
     setLoading(true)
     setError(null)
     try {
-      await login(key)
+      if (mode === 'login') {
+        await login(username, password)
+      } else {
+        await register(username, password)
+      }
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
+      setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
       setLoading(false)
     }
@@ -37,25 +43,46 @@ export function Login() {
           <span className="text-base font-semibold text-ink">Coworkify</span>
         </div>
         <p className="mb-5 text-sm text-ink-muted">
-          Enter an API key to connect to the task platform.
+          {mode === 'login' ? 'Sign in to your account.' : 'Create an account to get started.'}
         </p>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <div>
-            <Label htmlFor="api-key">API key</Label>
+            <Label htmlFor="username">Username</Label>
             <Input
-              id="api-key"
-              type="password"
+              id="username"
               autoFocus
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="changeme_local_dev_key"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="alice"
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             />
           </div>
           {error && <p className="text-sm text-status-critical">{error}</p>}
-          <Button type="submit" variant="primary" disabled={loading || !key.trim()}>
-            {loading ? 'Connecting…' : 'Connect'}
+          <Button type="submit" variant="primary" disabled={loading || !username.trim() || !password}>
+            {loading ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
           </Button>
         </form>
+        <button
+          type="button"
+          onClick={() => {
+            setMode((m) => (m === 'login' ? 'register' : 'login'))
+            setError(null)
+          }}
+          className="mt-4 text-sm text-ink-muted hover:text-ink"
+        >
+          {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+        </button>
       </Card>
     </div>
   )

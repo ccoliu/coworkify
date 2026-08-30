@@ -55,3 +55,50 @@ export interface WsTaskUpdate {
   error: string | null
   timestamp: number
 }
+
+export type WorkflowStatus = 'pending' | 'success' | 'failed'
+
+export interface WorkflowStep {
+  id: string
+  task_id: string
+  depends_on: string[]
+  task_status: TaskStatus | null
+  task_name: string | null
+  task_type: string | null
+}
+
+export interface Workflow {
+  id: string
+  name: string
+  status: WorkflowStatus
+  created_at: string
+  updated_at: string
+  steps: WorkflowStep[]
+}
+
+export interface WorkflowStepCreate {
+  key: string
+  name: string
+  task_type: string
+  payload: Record<string, unknown>
+  priority: number
+  max_retries: number
+  depends_on: string[]
+}
+
+export interface WorkflowCreate {
+  name: string
+  steps: WorkflowStepCreate[]
+}
+
+export interface User {
+  id: string
+  username: string
+  created_at: string
+}
+
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user: User
+}

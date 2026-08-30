@@ -2,9 +2,11 @@ import time
 import uuid
 import os
 import redis.asyncio as redis
-from fastapi import Request, HTTPException, status
+from fastapi import Request, HTTPException, status, Depends
 from dotenv import load_dotenv
 from pathlib import Path
+from app.core.security import get_current_user
+from app.models.user import User
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -22,11 +24,9 @@ class RateLimiter:
         self.times = times
         self.seconds = seconds
 
-    async def __call__(self, request: Request):
+    async def __call__(self, request: Request, current_user: User = Depends(get_current_user)):
         # 優先以 API Key 作為識別對象，若無則使用 Client IP
-        client_key = request.headers.get("X-API-Key") or request.client.host
-        route_path = request.url.path 
-        rate_key = f"ratelimit:{client_key}:{route_path}"
+        rate_key = f"ratelimit:{current_user.id}:{request.url.path}"
 
         now = time.time()
         window_start = now - self.seconds

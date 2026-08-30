@@ -59,6 +59,8 @@ class WorkflowStepResponse(BaseModel):
     task_id: UUID
     depends_on: List[UUID]
     task_status: Optional[str] = None
+    task_name: Optional[str] = None
+    task_type: Optional[str] = None
 
 class WorkflowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

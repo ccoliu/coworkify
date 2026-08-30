@@ -1,5 +1,13 @@
-import { getApiKey } from './apiKey'
-import type { Task, TaskCreate, TaskListFilters } from './types'
+import { getAuthToken } from './authStorage'
+import type {
+  AuthResponse,
+  Task,
+  TaskCreate,
+  TaskListFilters,
+  User,
+  Workflow,
+  WorkflowCreate,
+} from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
@@ -16,10 +24,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const apiKey = getApiKey()
+  const token = getAuthToken()
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
-  if (apiKey) headers.set('X-API-Key', apiKey)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
 
   const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
 
@@ -47,6 +55,24 @@ export function fetchHealth(): Promise<{ status: string; message: string }> {
   return request('/health')
 }
 
+export function register(username: string, password: string): Promise<AuthResponse> {
+  return request('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function login(username: string, password: string): Promise<AuthResponse> {
+  return request('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function fetchMe(): Promise<User> {
+  return request('/auth/me')
+}
+
 export function listTasks(filters: TaskListFilters): Promise<Task[]> {
   const params = new URLSearchParams()
   if (filters.status) params.set('status', filters.status)
@@ -66,4 +92,17 @@ export function createTask(task: TaskCreate): Promise<Task> {
 
 export function deleteTask(id: string): Promise<void> {
   return request(`/tasks/${id}`, { method: 'DELETE' })
+}
+
+export function listWorkflows(limit = 20, offset = 0): Promise<Workflow[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  return request(`/workflows/?${params.toString()}`)
+}
+
+export function getWorkflow(id: string): Promise<Workflow> {
+  return request(`/workflows/${id}`)
+}
+
+export function createWorkflow(workflow: WorkflowCreate): Promise<Workflow> {
+  return request('/workflows/', { method: 'POST', body: JSON.stringify(workflow) })
 }

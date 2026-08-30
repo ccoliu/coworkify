@@ -1,45 +1,72 @@
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import {
-  createContext,
-  useContext,
-  useState,
-  type ReactNode,
-} from 'react'
-import { ApiError, listTasks } from '../lib/apiClient'
-import { clearApiKey, getApiKey, setApiKey } from '../lib/apiKey'
+  ApiError,
+  fetchMe,
+  login as loginRequest,
+  register as registerRequest,
+} from '../lib/apiClient'
+import { clearAuthToken, getAuthToken, setAuthToken } from '../lib/authStorage'
+import type { User } from '../lib/types'
 
 interface AuthContextValue {
-  apiKey: string | null
-  login: (key: string) => Promise<void>
+  user: User | null
+  isReady: boolean
+  login: (username: string, password: string) => Promise<void>
+  register: (username: string, password: string) => Promise<void>
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [apiKey, setKey] = useState<string | null>(getApiKey)
+  const [user, setUser] = useState<User | null>(null)
+  const [isReady, setIsReady] = useState(false)
 
-  async function login(key: string) {
-    const trimmed = key.trim()
-    setApiKey(trimmed)
+  useEffect(() => {
+    const token = getAuthToken()
+    if (!token) {
+      setIsReady(true)
+      return
+    }
+    fetchMe()
+      .then(setUser)
+      .catch(() => clearAuthToken())
+      .finally(() => setIsReady(true))
+  }, [])
+
+  async function login(username: string, password: string) {
     try {
-      await listTasks({ limit: 1, offset: 0 })
+      const res = await loginRequest(username, password)
+      setAuthToken(res.access_token)
+      setUser(res.user)
     } catch (err) {
-      clearApiKey()
-      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-        throw new Error('That API key was rejected by the server.')
+      if (err instanceof ApiError && err.status === 401) {
+        throw new Error('Invalid username or password.')
       }
       throw new Error('Could not reach the Coworkify API. Is it running?')
     }
-    setKey(trimmed)
+  }
+
+  async function register(username: string, password: string) {
+    try {
+      const res = await registerRequest(username, password)
+      setAuthToken(res.access_token)
+      setUser(res.user)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        throw new Error('That username is already taken.')
+      }
+      throw new Error('Could not reach the Coworkify API. Is it running?')
+    }
   }
 
   function logout() {
-    clearApiKey()
-    setKey(null)
+    clearAuthToken()
+    setUser(null)
   }
 
   return (
-    <AuthContext.Provider value={{ apiKey, login, logout }}>
+    <AuthContext.Provider value={{ user, isReady, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   )
