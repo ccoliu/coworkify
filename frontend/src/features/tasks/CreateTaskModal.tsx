@@ -1,9 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
-import { ApiError, createTask, listRunners } from '../../lib/apiClient'
+import { ApiError, createTask } from '../../lib/apiClient'
 import { TASK_TYPES } from '../../lib/types'
 import { Button } from '../../components/Button'
-import { FieldError, Input, Label, Select, Textarea } from '../../components/Field'
+import { Input, Label, Select } from '../../components/Field'
 import { Modal } from '../../components/Modal'
 import { useToast } from '../../context/ToastContext'
 import { defaultPayload, PAYLOAD_SPECS } from './taskTypePayloads'
@@ -11,19 +11,15 @@ import { defaultPayload, PAYLOAD_SPECS } from './taskTypePayloads'
 export function CreateTaskModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient()
   const { push } = useToast()
-  const { data: runners } = useQuery({ queryKey: ['runners'], queryFn: listRunners })
 
   const [name, setName] = useState('')
   const [taskType, setTaskType] = useState<string>(TASK_TYPES[0])
   const [payload, setPayload] = useState<Record<string, unknown>>(
     defaultPayload(TASK_TYPES[0]),
   )
-  const [rawPayloadText, setRawPayloadText] = useState('{}')
-  const [rawPayloadError, setRawPayloadError] = useState<string | null>(null)
   const [priority, setPriority] = useState(0)
   const [maxRetries, setMaxRetries] = useState(3)
   const [scheduledAt, setScheduledAt] = useState('')
-  const [runnerId, setRunnerId] = useState<string | null>(null)
 
   const mutation = useMutation({
     mutationFn: createTask,
@@ -42,41 +38,19 @@ export function CreateTaskModal({ onClose }: { onClose: () => void }) {
     setPayload(defaultPayload(value))
   }
 
-  function onRunnerChange(value: string) {
-    const nextRunnerId = value || null
-    setRunnerId(nextRunnerId)
-    if (!nextRunnerId) {
-      // 換回共用 worker 時，task type 重置成內建類型比較安全
-      onTaskTypeChange(TASK_TYPES[0])
-    }
-  }
-
   function onSubmit(e: FormEvent) {
     e.preventDefault()
-    if (spec.length === 0 && rawPayloadError) return
-
-    let resolvedPayload = payload
-    if (spec.length === 0) {
-      try {
-        resolvedPayload = JSON.parse(rawPayloadText || '{}')
-      } catch {
-        setRawPayloadError('Invalid JSON')
-        return
-      }
-    }
-
     mutation.mutate({
       name,
       task_type: taskType,
-      payload: resolvedPayload,
+      payload,
       priority,
       max_retries: maxRetries,
       scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-      runner_id: runnerId ?? undefined,
     })
   }
 
-  const spec = runnerId ? [] : PAYLOAD_SPECS[taskType] ?? []
+  const spec = PAYLOAD_SPECS[taskType] ?? []
 
   return (
     <Modal
@@ -91,7 +65,7 @@ export function CreateTaskModal({ onClose }: { onClose: () => void }) {
             variant="primary"
             type="submit"
             form="create-task-form"
-            disabled={mutation.isPending || !name.trim() || (spec.length === 0 && !!rawPayloadError)}
+            disabled={mutation.isPending || !name.trim()}
           >
             {mutation.isPending ? 'Creating…' : 'Create task'}
           </Button>
@@ -112,69 +86,18 @@ export function CreateTaskModal({ onClose }: { onClose: () => void }) {
 
         <div>
           <Label htmlFor="task-type">Task type</Label>
-          {runnerId ? (
-            <Input
-              id="task-type"
-              value={taskType}
-              onChange={(e) => setTaskType(e.target.value)}
-              placeholder="e.g. local_job_apply"
-              required
-            />
-          ) : (
-            <Select
-              id="task-type"
-              value={taskType}
-              onChange={(e) => onTaskTypeChange(e.target.value)}
-            >
-              {TASK_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Select>
-          )}
+          <Select
+            id="task-type"
+            value={taskType}
+            onChange={(e) => onTaskTypeChange(e.target.value)}
+          >
+            {TASK_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
         </div>
-
-        {runners && runners.length > 0 && (
-          <div>
-            <Label htmlFor="task-runner">Run on</Label>
-            <Select id="task-runner" value={runnerId ?? ''} onChange={(e) => onRunnerChange(e.target.value)}>
-              <option value="">Coworkify shared workers</option>
-              {runners.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </Select>
-            {runnerId && (
-              <p className="mt-1 text-xs text-ink-muted">
-                此任務不會派到共用 worker，改由這個 runner 的本機 agent 認領執行。
-              </p>
-            )}
-          </div>
-        )}
-
-        {spec.length === 0 && (
-          <div>
-            <Label htmlFor="task-raw-payload">Payload (JSON)</Label>
-            <Textarea
-              id="task-raw-payload"
-              rows={4}
-              value={rawPayloadText}
-              onChange={(e) => {
-                const value = e.target.value
-                setRawPayloadText(value)
-                try {
-                  JSON.parse(value || '{}')
-                  setRawPayloadError(null)
-                } catch {
-                  setRawPayloadError('Invalid JSON')
-                }
-              }}
-            />
-            <FieldError>{rawPayloadError}</FieldError>
-          </div>
-        )}
 
         {spec.length > 0 && (
           <div className="rounded-lg border border-border p-3">

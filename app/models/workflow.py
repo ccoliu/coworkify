@@ -1,7 +1,7 @@
 from pydantic._internal._known_annotated_metadata import UUID_CONSTRAINTS
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 from enum import Enum
 from sqlalchemy import UUID, String, DateTime, JSON, ForeignKey, Integer, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -68,10 +68,6 @@ class WorkflowStepTemplate(Base):
     depends_on_keys: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
     for_each_task_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False
-    )
-    # 展開出來的每個 task 要繼承的 runner 指派（None 代表跑在共用 worker）
-    runner_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("runners.id"), nullable=True
     )
     expanded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())

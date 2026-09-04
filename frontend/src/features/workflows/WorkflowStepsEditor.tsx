@@ -1,9 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
-import { listRunners } from '../../lib/apiClient'
 import { TASK_TYPES } from '../../lib/types'
 import { Button } from '../../components/Button'
-import { FieldError, Input, Label, Select, Textarea } from '../../components/Field'
+import { Input, Label, Select } from '../../components/Field'
 import { defaultPayload, PAYLOAD_SPECS } from '../tasks/taskTypePayloads'
 
 export interface StepDraft {
@@ -15,7 +12,6 @@ export interface StepDraft {
     maxRetries: number
     dependsOnUids: string[]
     forEachUid: string | null
-    runnerId: string | null
 }
 
 export function makeStep(dependsOn: string[] = []): StepDraft {
@@ -28,42 +24,7 @@ export function makeStep(dependsOn: string[] = []): StepDraft {
         maxRetries: 3,
         dependsOnUids: dependsOn,
         forEachUid: null,
-        runnerId: null,
     }
-}
-
-function RawPayloadEditor({
-    step,
-    onUpdateStep,
-}: {
-    step: StepDraft
-    onUpdateStep: WorkflowStepsEditorProps['onUpdateStep']
-}) {
-    const [text, setText] = useState(() => JSON.stringify(step.payload, null, 2))
-    const [error, setError] = useState<string | null>(null)
-
-    return (
-        <div>
-            <Label htmlFor={`step-payload-${step.uid}`}>Payload (JSON)</Label>
-            <Textarea
-                id={`step-payload-${step.uid}`}
-                rows={4}
-                value={text}
-                onChange={(e) => {
-                    const value = e.target.value
-                    setText(value)
-                    try {
-                        const parsed = JSON.parse(value || '{}')
-                        setError(null)
-                        onUpdateStep(step.uid, { payload: parsed })
-                    } catch {
-                        setError('Invalid JSON')
-                    }
-                }}
-            />
-            <FieldError>{error}</FieldError>
-        </div>
-    )
 }
 
 interface WorkflowStepsEditorProps {
@@ -81,12 +42,10 @@ export function WorkflowStepsEditor({
     onToggleDependsOn,
     onAddStep,
 }: WorkflowStepsEditorProps) {
-    const { data: runners } = useQuery({ queryKey: ['runners'], queryFn: listRunners })
-
     return (
         <div className="flex flex-col gap-3">
             {steps.map((step, i) => {
-                const spec = step.runnerId ? [] : PAYLOAD_SPECS[step.taskType] ?? []
+                const spec = PAYLOAD_SPECS[step.taskType] ?? []
                 // 可以被選為 for_each 來源的 step：不是自己、也不能是另一個動態展開步驟
                 const forEachCandidates = steps.filter((s) => s.uid !== step.uid && !s.forEachUid)
                 // depends on 候選名單：一般步驟只能依賴其他一般步驟；
@@ -126,66 +85,24 @@ export function WorkflowStepsEditor({
                                 </div>
                                 <div>
                                     <Label htmlFor={`step-type-${step.uid}`}>Task type</Label>
-                                    {step.runnerId ? (
-                                        <Input
-                                            id={`step-type-${step.uid}`}
-                                            value={step.taskType}
-                                            onChange={(e) => onUpdateStep(step.uid, { taskType: e.target.value })}
-                                            placeholder="e.g. local_job_apply"
-                                            required
-                                        />
-                                    ) : (
-                                        <Select
-                                            id={`step-type-${step.uid}`}
-                                            value={step.taskType}
-                                            onChange={(e) =>
-                                                onUpdateStep(step.uid, {
-                                                    taskType: e.target.value,
-                                                    payload: defaultPayload(e.target.value),
-                                                })
-                                            }
-                                        >
-                                            {TASK_TYPES.map((t) => (
-                                                <option key={t} value={t}>
-                                                    {t}
-                                                </option>
-                                            ))}
-                                        </Select>
-                                    )}
-                                </div>
-                            </div>
-
-                            {runners && runners.length > 0 && (
-                                <div>
-                                    <Label htmlFor={`step-runner-${step.uid}`}>Run on</Label>
                                     <Select
-                                        id={`step-runner-${step.uid}`}
-                                        value={step.runnerId ?? ''}
-                                        onChange={(e) => {
-                                            const runnerId = e.target.value || null
+                                        id={`step-type-${step.uid}`}
+                                        value={step.taskType}
+                                        onChange={(e) =>
                                             onUpdateStep(step.uid, {
-                                                runnerId,
-                                                // 換掉/取消 runner 時，task_type 不再受本機自訂字串限制，重置成第一個內建類型比較安全
-                                                ...(runnerId
-                                                    ? {}
-                                                    : { taskType: TASK_TYPES[0], payload: defaultPayload(TASK_TYPES[0]) }),
+                                                taskType: e.target.value,
+                                                payload: defaultPayload(e.target.value),
                                             })
-                                        }}
+                                        }
                                     >
-                                        <option value="">Coworkify shared workers</option>
-                                        {runners.map((r) => (
-                                            <option key={r.id} value={r.id}>
-                                                {r.name}
+                                        {TASK_TYPES.map((t) => (
+                                            <option key={t} value={t}>
+                                                {t}
                                             </option>
                                         ))}
                                     </Select>
-                                    {step.runnerId && (
-                                        <p className="mt-1 text-xs text-ink-muted">
-                                            此步驟不會派到共用 worker，改由這個 runner 的本機 agent 認領執行。
-                                        </p>
-                                    )}
                                 </div>
-                            )}
+                            </div>
 
                             {forEachCandidates.length > 0 && (
                                 <div>
@@ -259,8 +176,6 @@ export function WorkflowStepsEditor({
                                     ))}
                                 </div>
                             )}
-
-                            {spec.length === 0 && <RawPayloadEditor step={step} onUpdateStep={onUpdateStep} />}
 
                             {dependsOnCandidates.length > 0 && (
                                 <div>

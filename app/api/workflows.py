@@ -31,7 +31,6 @@ def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
             s.task_status = task.status
             s.task_name = task.name
             s.task_type = task.task_type
-            s.task_runner_id = task.runner_id
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):

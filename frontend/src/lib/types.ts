@@ -16,7 +16,6 @@ export interface Task {
   max_retries: number
   retry_count: number
   scheduled_at: string | null
-  runner_id: string | null
   created_at: string
   updated_at: string
 }
@@ -28,7 +27,6 @@ export interface TaskCreate {
   priority: number
   max_retries: number
   scheduled_at?: string | null
-  runner_id?: string | null
 }
 
 export interface TaskListFilters {
@@ -75,7 +73,6 @@ export interface WorkflowStep {
   task_status: TaskStatus | null
   task_name: string | null
   task_type: string | null
-  task_runner_id: string | null
 }
 
 export interface Workflow {
@@ -96,7 +93,6 @@ export interface WorkflowStepCreate {
   max_retries: number
   depends_on: string[]
   for_each?: string | null
-  runner_id?: string | null
 }
 
 export interface WorkflowCreate {
@@ -133,17 +129,6 @@ export interface WorkflowScheduleCreate {
   cron_expression: string
   steps: WorkflowStepCreate[]
   enabled: boolean
-}
-
-export interface Runner {
-  id: string
-  name: string
-  last_seen_at: string | null
-  created_at: string
-}
-
-export interface RunnerCreated extends Runner {
-  token: string
 }
 
 export interface WorkflowScheduleUpdate {

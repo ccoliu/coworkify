@@ -1,8 +1,6 @@
 import { getAuthToken } from './authStorage'
 import type {
   AuthResponse,
-  Runner,
-  RunnerCreated,
   Task,
   TaskCreate,
   TaskListFilters,
@@ -130,16 +128,4 @@ export function updateSchedule(id: string, patch: WorkflowScheduleUpdate): Promi
 
 export function deleteSchedule(id: string): Promise<void> {
   return request(`/schedules/${id}`, { method: 'DELETE' })
-}
-
-export function listRunners(): Promise<Runner[]> {
-  return request('/runners/')
-}
-
-export function createRunner(name: string): Promise<RunnerCreated> {
-  return request('/runners/', { method: 'POST', body: JSON.stringify({ name }) })
-}
-
-export function deleteRunner(id: string): Promise<void> {
-  return request(`/runners/${id}`, { method: 'DELETE' })
 }

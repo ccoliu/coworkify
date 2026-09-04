@@ -35,9 +35,7 @@ services:
     build: .
     container_name: coworkify_api
     restart: always
-    # --reload-exclude 'runner/*'：runner/ 是給使用者拿到自己機器上跑的 local agent，
-    # 不屬於這個 api 服務本身；不排除的話，改動它會觸發 uvicorn 不必要的 reload。
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude 'runner/*'
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
     volumes:

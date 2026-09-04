@@ -12,9 +12,6 @@ class WorkflowStepCreate(BaseModel):
     priority: int = Field(default=3, ge=0)
     max_retries: int = Field(default=3, ge=0)
     depends_on: List[str] = Field(default_factory=list, description="依賴的其他 step 的 key")
-    runner_id: Optional[UUID] = Field(
-        default=None, description="若設定，此步驟不會派到共用 worker，改由對應的本機 runner 認領執行"
-    )
     for_each: Optional[str] = Field(
         None,
         description=(
@@ -97,7 +94,6 @@ class WorkflowStepResponse(BaseModel):
     task_status: Optional[str] = None
     task_name: Optional[str] = None
     task_type: Optional[str] = None
-    task_runner_id: Optional[UUID] = None
 
 class WorkflowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

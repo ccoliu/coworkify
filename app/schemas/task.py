@@ -10,9 +10,6 @@ class TaskCreate(BaseModel):
     priority: int = Field(default=0, ge=0, le=10, description="任務優先級(0~10)")
     max_retries: int = Field(default=3, ge=0, description="最大重試次數")
     scheduled_at: Optional[datetime] = Field(default=None, description="預定執行時間")
-    runner_id: Optional[UUID] = Field(
-        default=None, description="若設定，此任務不會派到共用 worker，改由對應的本機 runner 認領執行"
-    )
 
 class TaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -26,6 +23,5 @@ class TaskResponse(BaseModel):
     max_retries: int
     retry_count: int
     scheduled_at: Optional[datetime]
-    runner_id: Optional[UUID]
     created_at: datetime
     updated_at: datetime

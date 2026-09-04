@@ -75,8 +75,7 @@ def execute_task(self, task_id: str):
 
 
 def record_task_success(db, task: Task, result, execute_time_ms: float = 0.0):
-    """把一個 task 標記成功，寫 log、推播狀態、觸發 workflow 後續派送。
-    Celery 執行路徑（execute_task）跟本機 runner 回報路徑共用這個函式。"""
+    """把一個 task 標記成功，寫 log、推播狀態、觸發 workflow 後續派送。"""
     task.status = TaskStatus.SUCCESS
     notify_status_change(str(task.id), TaskStatus.SUCCESS, result, None)
     db.add(TaskLog(
@@ -92,9 +91,7 @@ def record_task_success(db, task: Task, result, execute_time_ms: float = 0.0):
 def record_task_failure(db, task: Task, error_message: str, execute_time_ms: float = 0.0) -> Optional[int]:
     """
     記錄一次失敗。還有重試次數的話轉成 RETRYING 並回傳這次該等待的秒數
-    （Celery 路徑用它 self.retry(countdown=...)；本機 runner 路徑則把
-    task.scheduled_at 往後推，等下次輪詢時間到了才會再被認領）。
-    重試次數用完就標記 FAILED、串連取消下游，回傳 None。
+    （用於 self.retry(countdown=...)）。重試次數用完就標記 FAILED、串連取消下游，回傳 None。
     """
     if task.retry_count < task.max_retries:
         task.retry_count += 1
@@ -126,10 +123,7 @@ def record_task_failure(db, task: Task, error_message: str, execute_time_ms: flo
 
 
 def dispatch_task(task: Task):
-    """派送一個 pending task：有指定 runner 的留給本機 runner 去 /runner/tasks/next 認領，
-    否則跟以前一樣丟進 Celery 佇列給共用 worker 執行。"""
-    if task.runner_id:
-        return
+    """派送一個 pending task 進 Celery 佇列給共用 worker 執行"""
     execute_task.apply_async(args=[str(task.id)], priority=task.priority)
         
 def advance_workflow(db, task: Task):
@@ -201,7 +195,6 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
             payload=step["payload"],
             priority=step["priority"],
             max_retries=step.get("max_retries", 3),
-            runner_id=step.get("runner_id"),
             status="pending",
         )
         db.add(task)
@@ -232,7 +225,6 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
             max_retries=step.get("max_retries", 3),
             depends_on_keys=step.get("depends_on", []),
             for_each_task_id=map_task.id,
-            runner_id=step.get("runner_id"),
         )
         db.add(tmpl)
 
@@ -314,7 +306,6 @@ def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
                 payload=render_payload(template.payload_template, item),
                 priority=template.priority,
                 max_retries=template.max_retries,
-                runner_id=template.runner_id,
                 status="pending",
             )
             db.add(task)

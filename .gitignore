@@ -23,3 +23,6 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Celery Beat 執行期排程資料庫（每次啟動都會改變，不該進版控）
+celerybeat-schedule

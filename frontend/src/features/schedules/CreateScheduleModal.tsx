@@ -52,7 +52,6 @@ export function CreateScheduleModal({ onClose }: { onClose: () => void }) {
                 max_retries: s.maxRetries,
                 depends_on: s.dependsOnUids,
                 for_each: s.forEachUid ?? undefined,
-                runner_id: s.runnerId ?? undefined,
             })),
         })
     }

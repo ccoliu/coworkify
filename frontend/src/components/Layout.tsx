@@ -8,7 +8,6 @@ const NAV_ITEMS = [
   { to: '/ops', label: 'Ops', end: false },
   { to: '/workflows', label: 'Workflows', end: false },
   { to: '/schedules', label: 'Schedules', end: false },
-  { to: '/runners', label: 'Runners', end: false },
 ]
 
 export function Layout() {

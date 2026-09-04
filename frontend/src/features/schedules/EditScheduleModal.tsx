@@ -25,7 +25,6 @@ function stepsToDrafts(steps: WorkflowSchedule['steps']): StepDraft[] {
         maxRetries: s.max_retries,
         dependsOnUids: s.depends_on,
         forEachUid: s.for_each ?? null,
-        runnerId: s.runner_id ?? null,
     }))
 }
 
@@ -53,7 +52,6 @@ export function EditScheduleModal({ schedule, onClose }: { schedule: WorkflowSch
                     max_retries: s.maxRetries,
                     depends_on: s.dependsOnUids,
                     for_each: s.forEachUid ?? undefined,
-                    runner_id: s.runnerId ?? undefined,
                 })),
             }),
         onSuccess: () => {

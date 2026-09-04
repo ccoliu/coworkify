@@ -19,6 +19,8 @@
 - ⏱️ **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
 - 🛡️ **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
 - 🔗 **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
+- 🌱 **動態 Fan-out（for_each）**：某個節點執行結果若是一份 list（例如「搜尋到 N 筆職缺」），下游步驟可設定 `for_each` 指向它，執行成功後自動依 list 內每個項目各展開一份任務（`{{item.欄位}}` 語法取值），無需事先知道分支數量。
+- ⏰ **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
 - 🚦 **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - ⚡ **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - 🔑 **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
@@ -33,9 +35,12 @@ flowchart TD
     UI[React Dashboard] -->|HTTP + WebSocket| API[FastAPI API Server]
     API -->|1. 寫入任務/Workflow 中繼資料| DB[(PostgreSQL)]
     API -->|2. 推送任務至佇列| Redis[(Redis)]
+    Beat[Celery Beat] -->|每分鐘檢查到期排程| DB
+    Beat -->|到點建立 workflow 並派送根節點| Redis
     Worker[Celery Workers] -->|3. 消費任務| Redis
     Worker -->|4. 更新狀態與日誌| DB
     Worker -->|5. 發布狀態變更| Redis
+    Worker -->|結果為 list 時動態展開 for_each 分支| DB
     Redis -->|6. Pub/Sub 推播| API
     API -->|7. WebSocket 即時更新| UI
     Worker -->|依賴滿足時派送下一節點| Worker
@@ -48,6 +53,10 @@ flowchart TD
 | `echo` | 簡單回聲任務，用於測試系統連通性 |
 | `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
 | `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
+| `http_request` | 對外發送 HTTP 請求並回傳結果，內建 SSRF 防護（拒絕解析到內網/loopback/metadata IP 的網址） |
+| `job_search` | 模擬搜尋職缺並回傳一份 list，用來示範 `for_each` 動態展開 |
+| `tailor_cv` | 模擬依職缺 JD 客製化履歷內容 |
+| `job_apply` | 模擬投遞履歷 |
 
 ---
 
@@ -63,7 +72,7 @@ flowchart TD
 ```bash
 docker-compose up -d --build
 ```
-會啟動：PostgreSQL、Redis、FastAPI API、Celery Worker、React 前端。
+會啟動：PostgreSQL、Redis、FastAPI API、Celery Worker、Celery Beat（排程檢查）、React 前端。
 
 - 🌐 前端 Dashboard: http://localhost:5173
 - 📖 API 文件 (Swagger UI): http://localhost:8000/docs
@@ -113,13 +122,37 @@ POST /workflows/
 ```
 `depends_on` 可以填多個 key，支援分支與合併（真正的 DAG，不只是線性鏈）；任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`。
 
+一個帶動態 fan-out 的範例：先搜尋職缺，再對每一筆搜尋結果各自客製化履歷：
+```json
+POST /workflows/
+{
+  "name": "daily-job-search",
+  "steps": [
+    { "key": "search", "name": "search jobs", "task_type": "job_search", "payload": {"keyword": "backend engineer", "count": 3}, "depends_on": [] },
+    { "key": "tailor", "name": "tailor cv", "task_type": "tailor_cv", "for_each": "search", "payload": {"title": "{{item.title}}", "jd": "{{item.jd}}"}, "depends_on": [] }
+  ]
+}
+```
+`search` 任務成功後若回傳一份 list，`tailor` 這個模板步驟就會依 list 內每個項目各自展開成一份真正的任務（`tailor [1]`、`tailor [2]`、`tailor [3]`…），`payload` 裡的 `{{item}}` / `{{item.欄位}}` 會被換成該項目的實際值。目前僅支援單層展開（fan-out），尚未支援讓一般節點依賴動態節點做 fan-in/reduce。
+
+### Schedules（週期性排程）
+| Method | Endpoint | 說明 |
+| :--- | :--- | :--- |
+| `POST` | `/schedules/` | 建立一個綁定 cron 表達式的週期性 workflow（steps 定義同 `/workflows/`） |
+| `GET` | `/schedules/` | 列出所有排程 |
+| `GET` | `/schedules/{schedule_id}` | 查詢單一排程 |
+| `PATCH` | `/schedules/{schedule_id}` | 更新排程內容、cron 或啟用狀態 |
+| `DELETE` | `/schedules/{schedule_id}` | 刪除排程 |
+
+Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at` 到期就依 `steps` 建立一份新的 workflow 並派送根節點，再依 cron 表達式計算下一次執行時間。cron 以應用程式設定的時區（`Asia/Taipei`）解讀，跟 `next_run_at` 的顯示、比較邏輯保持一致。
+
 ### 其他
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
 | `GET` | `/health` | API 伺服器健康檢查 |
 | `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 
-`/tasks` 與 `/workflows` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。
+`/tasks`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。
 
 ---
 
@@ -161,5 +194,6 @@ React + TypeScript + Tailwind SPA，細節見 [frontend/README.md](frontend/READ
 
 - **登入頁**：支援註冊新帳號或用既有帳號登入，登入後 JWT 存在瀏覽器 localStorage，重新整理不用再登入一次。
 - **Tasks 頁**：任務列表、篩選、建立單一任務，狀態透過 WebSocket 即時更新。
-- **Workflows 頁**：列出所有建立過的 workflow，可用多步驟表單建立新的 DAG（每個步驟可勾選要依賴哪些前面的步驟），點進去可看拓樸分層畫出來的管線圖，每個節點即時顯示執行狀態。
+- **Workflows 頁**：列出所有建立過的 workflow，可用多步驟表單建立新的 DAG（每個步驟可勾選要依賴哪些前面的步驟、或設定 `for_each` 動態展開來源），點進去可看拓樸分層畫出來的管線圖，每個節點即時顯示執行狀態。
+- **Schedules 頁**：管理週期性 workflow，用同一套步驟編輯器搭配 cron 表達式輸入（含常用預設如「每天 9:00」），顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。
 - **Ops 頁**：佇列深度、吞吐量走勢圖、錯誤率等即時監控指標。
