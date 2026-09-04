@@ -6,6 +6,9 @@ from app.api.tasks import router as tasks_router
 from app.api.ws import router as ws_router
 from app.api.workflows import router as workflows_router
 from app.api.auth import router as auth_router
+from app.api.schedule import router as schedule_router
+from app.api.runners import router as runners_router
+from app.api.runner_tasks import router as runner_tasks_router
 from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
@@ -34,6 +37,9 @@ app.include_router(tasks_router)
 app.include_router(ws_router)
 app.include_router(workflows_router)
 app.include_router(auth_router)
+app.include_router(schedule_router)
+app.include_router(runners_router)
+app.include_router(runner_tasks_router)
 
 @app.get("/health")
 def health_check():

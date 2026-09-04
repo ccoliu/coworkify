@@ -14,7 +14,7 @@ celery_app = Celery(
     "coworkify",
     broker=REDIS_URL, # 任務佇列，傳遞任務
     backend=REDIS_URL, # 任務結果，儲存
-    include=["app.tasks.executor"] # 告訴 Celery 要自動載入的任務模組
+    include=["app.tasks.executor", "app.tasks.scheduler"] # 告訴 Celery 要自動載入的任務模組
 )
 
 # advanced
@@ -33,3 +33,10 @@ celery_app.conf.update(
         "queue_order_strategy": "priority"
     }
 )
+
+celery_app.conf.beat_schedule = {
+    "check-due-workflow-schedules": {
+        "task": "coworkify.check_due_schedules",
+        "schedule": 60.0 # 每60秒檢查一次排程
+    }
+}

@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
@@ -6,12 +8,14 @@ from uuid import UUID
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models.user import User
+from app.models.runner import Runner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
@@ -55,3 +59,28 @@ def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return user
+
+
+def generate_runner_token() -> str:
+    """高熵亂數 token，只在建立 runner 當下回傳一次，之後只存它的雜湊"""
+    return secrets.token_urlsafe(32)
+
+
+def hash_runner_token(token: str) -> str:
+    """runner token 是高熵亂數（不是使用者密碼），用 SHA-256 讓 DB 可以直接查表比對即可"""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def get_current_runner(
+    x_runner_token: str = Header(..., alias="X-Runner-Token"),
+    db: Session = Depends(get_db),
+) -> Runner:
+    runner = db.scalars(
+        select(Runner).where(Runner.token_hash == hash_runner_token(x_runner_token))
+    ).first()
+    if not runner:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid runner token")
+
+    runner.last_seen_at = datetime.utcnow()
+    db.commit()
+    return runner

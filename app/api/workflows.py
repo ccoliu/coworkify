@@ -1,3 +1,4 @@
+from app.tasks.executor import create_workflow_from_steps
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -8,7 +9,7 @@ from app.db import get_db
 from app.models.task import Task
 from app.models.workflow import Workflow, WorkflowStep
 from app.schemas.workflow import WorkflowCreate, WorkflowResponse
-from app.tasks.executor import execute_task
+from app.tasks.executor import execute_task, create_workflow_from_steps
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
 
@@ -30,46 +31,13 @@ def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
             s.task_status = task.status
             s.task_name = task.name
             s.task_type = task.task_type
+            s.task_runner_id = task.runner_id
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):
-    workflow = Workflow(name=payload.name, status="pending")
-    db.add(workflow)
-    db.flush() # 取得 workflow.id
-
-    key_to_task: dict[str, Task] = {}
-    for step in payload.steps:
-        task = Task(
-            name = step.name,
-            task_type = step.task_type,
-            payload = step.payload,
-            priority = step.priority,
-            max_retries = step.max_retries,
-            status = "pending",
-        )
-        db.add(task)
-        key_to_task[step.key] = task
-    db.flush() # 產生 task_id
-
-    steps: list[WorkflowStep] = []
-    for step in payload.steps:
-        ws = WorkflowStep(
-            workflow_id=workflow.id,
-            task_id=key_to_task[step.key].id,
-            depends_on=[str(key_to_task[dep].id) for dep in step.depends_on]
-        )
-        db.add(ws)
-        steps.append(ws)
-
-    db.commit()
-    db.refresh(workflow)
-
-    # 派送沒有依賴的根結點
-    for step, ws in zip(payload.steps, steps):
-        if not step.depends_on:
-            task = key_to_task[step.key]
-            execute_task.apply_async(args=[str(task.id)], priority=task.priority)
-
+    workflow = create_workflow_from_steps(
+        db, payload.name, [s.model_dump() for s in payload.steps]
+    )
     _attach_task_details(db, workflow.steps)
     return workflow
 

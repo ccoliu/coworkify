@@ -1,12 +1,17 @@
 import { getAuthToken } from './authStorage'
 import type {
   AuthResponse,
+  Runner,
+  RunnerCreated,
   Task,
   TaskCreate,
   TaskListFilters,
   User,
   Workflow,
   WorkflowCreate,
+  WorkflowSchedule,
+  WorkflowScheduleCreate,
+  WorkflowScheduleUpdate,
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -105,4 +110,36 @@ export function getWorkflow(id: string): Promise<Workflow> {
 
 export function createWorkflow(workflow: WorkflowCreate): Promise<Workflow> {
   return request('/workflows/', { method: 'POST', body: JSON.stringify(workflow) })
+}
+
+export function listSchedules(): Promise<WorkflowSchedule[]> {
+  return request('/schedules/')
+}
+
+export function getSchedule(id: string): Promise<WorkflowSchedule> {
+  return request(`/schedules/${id}`)
+}
+
+export function createSchedule(schedule: WorkflowScheduleCreate): Promise<WorkflowSchedule> {
+  return request('/schedules/', { method: 'POST', body: JSON.stringify(schedule) })
+}
+
+export function updateSchedule(id: string, patch: WorkflowScheduleUpdate): Promise<WorkflowSchedule> {
+  return request(`/schedules/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+}
+
+export function deleteSchedule(id: string): Promise<void> {
+  return request(`/schedules/${id}`, { method: 'DELETE' })
+}
+
+export function listRunners(): Promise<Runner[]> {
+  return request('/runners/')
+}
+
+export function createRunner(name: string): Promise<RunnerCreated> {
+  return request('/runners/', { method: 'POST', body: JSON.stringify({ name }) })
+}
+
+export function deleteRunner(id: string): Promise<void> {
+  return request(`/runners/${id}`, { method: 'DELETE' })
 }

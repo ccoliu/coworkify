@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Celery Beat 本機排程狀態檔
+celerybeat-schedule*

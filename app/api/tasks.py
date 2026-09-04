@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.db import get_db
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskResponse
-from app.tasks.executor import execute_task
+from app.tasks.executor import execute_task, dispatch_task
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
 
@@ -22,18 +22,22 @@ def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
         priority = task_in.priority,
         max_retries = task_in.max_retries,
         scheduled_at = task_in.scheduled_at,
+        runner_id = task_in.runner_id,
         status = "pending",
     )
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
 
-    if db_task.scheduled_at:
+    if db_task.runner_id:
+        # 交給本機 runner 去 /runner/tasks/next 認領（會自動尊重 scheduled_at）
+        pass
+    elif db_task.scheduled_at:
         # 指定時間執行
-        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at, priority=db_task.priority) 
+        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at, priority=db_task.priority)
     else:
         # 立即執行
-        execute_task.apply_async(args=[str(db_task.id)], priority=db_task.priority)
+        dispatch_task(db_task)
 
     return db_task
 
