@@ -1,4 +1,6 @@
-# ⚡ Coworkify - Distributed Task Scheduling & Execution Platform
+# Coworkify - Distributed Task Scheduling & Execution Platform
+
+[English](README.en.md) | 繁體中文
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg?style=flat&logo=FastAPI&logoColor=white)](https://fastapi.tiangolo.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg?style=flat&logo=PostgreSQL&logoColor=white)](https://www.postgresql.org/)
@@ -7,30 +9,30 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow。
+**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，預計可承受每日 10M+ 請求。
 
 ![alt text](<coworkify.png>)
 ---
 
-## 🌟 核心特色 (Key Features)
+## 核心特色 (Key Features)
 
-- 🔄 **完整的任務生命週期管理**：支援 `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled` 狀態機流轉。
-- ⚡ **高性能非同步架構**：以 FastAPI 作為核心 API 閘道，結合 Redis 實現低延遲訊息佇列 (Message Broker)。
-- 🎯 **任務優先級調度 (Priority Queue)**：支援任務加權插隊，優先處理高優先級核心任務。
-- ⏱️ **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
-- 🛡️ **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
-- 🔗 **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
-- ⏰ **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
-- 🚦 **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
-- ⚡ **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
-- 🔑 **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
-- 📊 **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化，並有可視化 DAG 流程圖檢視 workflow 執行進度。
+- **完整的任務生命週期管理**：支援 `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled` 狀態機流轉。
+- **高性能非同步架構**：以 FastAPI 作為核心 API 閘道，結合 Redis 實現低延遲訊息佇列 (Message Broker)。
+- **任務優先級調度 (Priority Queue)**：支援任務加權插隊，優先處理高優先級核心任務。
+- **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
+- **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
+- **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
+- **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
+- **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
+- **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
+- **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
+- **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化，並有可視化 DAG 流程圖檢視 workflow 執行進度。
 
 ---
 
 
 
-## 📦 內建支援的任務類型 (Supported Task Handlers)
+## 內建支援的任務類型 (Supported Task Handlers)
 
 | 任務類型 (task_type) | 說明 |
 | :--- | :--- |
@@ -40,7 +42,7 @@
 
 ---
 
-## 🚀 快速開始 (Quick Start)
+## 快速開始 (Quick Start)
 
 ### 配置需求
 - Docker / Docker Compose
@@ -54,9 +56,9 @@ docker-compose up -d --build
 ```
 會啟動：PostgreSQL、Redis、FastAPI API、Celery Worker、Celery Beat（排程檢查）、React 前端。
 
-- 🌐 前端 Dashboard: http://localhost:5173
-- 📖 API 文件 (Swagger UI): http://localhost:8000/docs
-- ❤️ 健康檢查: http://localhost:8000/health
+- 前端 Dashboard: http://localhost:5173
+- API 文件 (Swagger UI): http://localhost:8000/docs
+- 健康檢查: http://localhost:8000/health
 
 ### 3. 啟動 Locust 壓力測試
 ```bash
@@ -123,7 +125,7 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 
 ---
 
-## 📊 壓力測試報告 (Benchmark Results)
+## 壓力測試報告 (Benchmark Results)
 
 使用 **Locust** 在 150 併發使用者、2 分鐘測試窗口下進行負載測試，模擬多用戶並發讀寫請求（包含資料庫查詢、任務建立與 Redis 佇列派發），資料庫在測試前已清空：
 - **總測試請求數**：23,310 Requests
