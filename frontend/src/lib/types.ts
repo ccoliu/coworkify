@@ -40,10 +40,10 @@ export const TASK_TYPES = [
   'echo',
   'heavy_computation',
   'flaky_task',
-  'http_request',
-  'job_search',
-  'tailor_cv',
-  'job_apply',
+  // 'http_request',
+  // 'job_search',
+  // 'tailor_cv',
+  // 'job_apply',
 ] as const
 export type TaskType = (typeof TASK_TYPES)[number]
 

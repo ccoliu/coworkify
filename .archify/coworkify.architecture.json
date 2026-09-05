@@ -7,27 +7,30 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/ccoliu/coworkify.git",
-      "revision": "fa048b79b258c2f2181d391ae350bfefb42d8e3d"
+      "revision": "116d909606693f174e49d89f5ce77cb88227c906"
     },
     "views": [
       { "id": "task-lifecycle", "label": "任務建立與執行", "focus": ["users", "frontend", "api", "redis", "worker", "db"], "note": "使用者透過前端建立任務,FastAPI 寫入 PostgreSQL 並派送至 Redis 佇列,Celery Worker 消費後執行並回寫結果。" },
       { "id": "realtime-push", "label": "即時狀態推播", "focus": ["worker", "redis", "api", "frontend"], "note": "Worker 執行完成後透過 Redis Pub/Sub 發布狀態,API 訂閱後以 WebSocket 即時推播給前端,無需輪詢。" },
-      { "id": "auth-and-limit", "label": "身份驗證與限流", "focus": ["frontend", "api", "auth", "redis"], "note": "所有 /tasks 與 /workflows 端點皆需 JWT,並依登入身份套用 Redis 滑動窗口限流。" }
+      { "id": "auth-and-limit", "label": "身份驗證與限流", "focus": ["frontend", "api", "auth", "redis"], "note": "所有 /tasks、/workflows、/schedules 端點皆需 JWT,並依登入身份套用 Redis 滑動窗口限流。" },
+      { "id": "cron-scheduling", "label": "週期性排程", "focus": ["beat", "redis", "worker", "db"], "note": "Celery Beat 每 60 秒送出檢查任務,Worker 消費後讀取到期的 WorkflowSchedule,建立新 workflow 並派送根節點。" },
+      { "id": "dynamic-fanout", "label": "動態 Fan-out", "focus": ["worker", "db"], "note": "某節點成功且結果為一份 list 時,Worker 依 list 內每個項目各自展開成真正的下游任務(for_each)。" }
     ]
   },
   "components": [
     { "id": "users", "type": "external", "label": "使用者", "sublabel": "瀏覽器", "pos": [40, 280], "size": [140, 64] },
     { "id": "locust", "type": "external", "label": "Locust", "sublabel": "壓力測試工具", "pos": [40, 444], "size": [140, 60], "sources": [{ "path": "tests/locustfile.py" }] },
-    { "id": "frontend", "type": "frontend", "label": "React Dashboard", "sublabel": "Vite :5173", "tag": "Login / Tasks / Workflows / Ops", "pos": [280, 280], "size": [170, 64], "sources": [{ "path": "frontend/src/App.tsx" }] },
+    { "id": "frontend", "type": "frontend", "label": "React Dashboard", "sublabel": "Vite :5173", "tag": "Login / Tasks / Workflows / Schedules / Ops", "pos": [280, 280], "size": [170, 64], "sources": [{ "path": "frontend/src/App.tsx" }] },
     { "id": "api", "type": "backend", "label": "FastAPI API Server", "sublabel": ":8000", "pos": [620, 280], "size": [170, 64], "sources": [{ "path": "app/main.py" }] },
     { "id": "auth", "type": "security", "label": "Auth & Rate Limit", "sublabel": "JWT + bcrypt", "pos": [620, 100], "size": [170, 64], "sources": [{ "path": "app/core/security.py" }, { "path": "app/core/rate_limit.py" }] },
+    { "id": "beat", "type": "backend", "label": "Celery Beat", "sublabel": "排程檢查", "tag": "每 60 秒", "pos": [900, 100], "size": [170, 64], "sources": [{ "path": "app/tasks/scheduler.py" }, { "path": "app/core/cron.py" }] },
     { "id": "redis", "type": "messagebus", "label": "Redis", "sublabel": ":6379", "tag": "Broker + Pub/Sub + 限流", "pos": [900, 280], "size": [160, 64] },
     { "id": "worker", "type": "backend", "label": "Celery Worker", "sublabel": "concurrency=4", "pos": [1140, 280], "size": [170, 64], "sources": [{ "path": "app/tasks/handler.py" }, { "path": "app/tasks/executor.py" }] },
     { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": ":5432", "pos": [625, 444], "size": [160, 64] }
   ],
   "boundaries": [
-    { "kind": "region", "label": "Docker Compose 服務網路", "wraps": ["frontend", "api", "auth", "redis", "worker", "db"] },
-    { "kind": "security-group", "label": "JWT 保護範圍 (/tasks, /workflows)", "wraps": ["api", "auth"] }
+    { "kind": "region", "label": "Docker Compose 服務網路", "wraps": ["frontend", "api", "auth", "beat", "redis", "worker", "db"] },
+    { "kind": "security-group", "label": "JWT 保護範圍 (API 端點)", "wraps": ["api", "auth"] }
   ],
   "connections": [
     { "id": "user-to-ui", "from": "users", "to": "frontend", "label": "HTTPS", "variant": "emphasis" },
@@ -37,14 +40,16 @@
     { "id": "api-write-db", "from": "api", "to": "db", "label": "寫入任務 / Workflow 中繼資料", "fromSide": "bottom", "toSide": "top", "labelAt": [705, 358] },
     { "id": "api-enqueue-redis", "from": "api", "to": "redis", "label": "派送任務至佇列", "labelAt": [814, 358] },
     { "id": "redis-to-worker", "from": "redis", "to": "worker", "label": "消費任務" },
-    { "id": "worker-update-db", "from": "worker", "to": "db", "label": "更新任務狀態與日誌" },
+    { "id": "worker-update-db", "from": "worker", "to": "db", "label": "更新狀態、動態展開 for_each 分支" },
     { "id": "worker-publish-redis", "from": "worker", "to": "redis", "label": "發布狀態 / 派送下游任務", "labelDy": -38 },
     { "id": "redis-pubsub-api", "from": "redis", "to": "api", "label": "Pub/Sub 推播狀態", "variant": "dashed", "labelAt": [876, 395] },
-    { "id": "locust-to-api", "from": "locust", "to": "api", "label": "壓力測試請求", "variant": "dashed" }
+    { "id": "locust-to-api", "from": "locust", "to": "api", "label": "壓力測試請求", "variant": "dashed" },
+    { "id": "beat-to-redis", "from": "beat", "to": "redis", "label": "每 60 秒送出到期檢查任務", "fromSide": "bottom", "toSide": "top" }
   ],
   "cards": [
-    { "dot": "cyan", "title": "前端", "items": ["React 19 + TypeScript + Tailwind SPA", "Vite dev server proxy /api、/ws 到後端", "Login / Tasks / Workflows / Ops 四大頁面"] },
-    { "dot": "emerald", "title": "任務執行", "items": ["FastAPI 接收 REST 與 WebSocket 連線", "Celery Worker 消費 Redis 佇列,支援 echo / heavy_computation / flaky_task", "DAG workflow 依賴滿足時自動派送下游節點,單一節點失敗連鎖取消下游"] },
+    { "dot": "cyan", "title": "前端", "items": ["React 19 + TypeScript + Tailwind SPA", "Vite dev server proxy /api、/ws 到後端", "Login / Tasks / Workflows / Schedules / Ops 五大頁面"] },
+    { "dot": "emerald", "title": "任務執行", "items": ["FastAPI 接收 REST 與 WebSocket 連線", "Celery Worker 消費 Redis 佇列,支援 echo / heavy_computation / flaky_task / http_request / job_search / tailor_cv / job_apply", "DAG workflow 依賴滿足時自動派送下游節點,單一節點失敗連鎖取消下游"] },
+    { "dot": "amber", "title": "排程與動態擴展", "items": ["WorkflowSchedule 綁定 cron 表達式,Celery Beat 每 60 秒檢查到期排程並自動建立、派送整組 workflow", "for_each 動態 Fan-out:節點結果為 list 時(如搜尋到 N 筆職缺),依項目各自展開成真正的下游任務,payload 用 {{item.欄位}} 取值"] },
     { "dot": "violet", "title": "即時性", "items": ["Redis Pub/Sub 推播任務與 workflow 狀態變更", "前端透過 WebSocket 即時更新,無需輪詢"] },
     { "dot": "rose", "title": "安全性", "items": ["bcrypt 雜湊密碼 + JWT 簽發 session token", "Redis 滑動窗口限流,依登入身份獨立計算請求速率"] }
   ]

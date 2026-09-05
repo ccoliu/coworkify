@@ -9,6 +9,7 @@
 
 **Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow。
 
+![alt text](<coworkify.png>)
 ---
 
 ## 🌟 核心特色 (Key Features)
@@ -19,7 +20,6 @@
 - ⏱️ **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
 - 🛡️ **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
 - 🔗 **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
-- 🌱 **動態 Fan-out（for_each）**：某個節點執行結果若是一份 list（例如「搜尋到 N 筆職缺」），下游步驟可設定 `for_each` 指向它，執行成功後自動依 list 內每個項目各展開一份任務（`{{item.欄位}}` 語法取值），無需事先知道分支數量。
 - ⏰ **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
 - 🚦 **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - ⚡ **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
@@ -28,23 +28,7 @@
 
 ---
 
-## 🏗️ 系統架構 (System Architecture)
 
-```mermaid
-flowchart TD
-    UI[React Dashboard] -->|HTTP + WebSocket| API[FastAPI API Server]
-    API -->|1. 寫入任務/Workflow 中繼資料| DB[(PostgreSQL)]
-    API -->|2. 推送任務至佇列| Redis[(Redis)]
-    Beat[Celery Beat] -->|每分鐘檢查到期排程| DB
-    Beat -->|到點建立 workflow 並派送根節點| Redis
-    Worker[Celery Workers] -->|3. 消費任務| Redis
-    Worker -->|4. 更新狀態與日誌| DB
-    Worker -->|5. 發布狀態變更| Redis
-    Worker -->|結果為 list 時動態展開 for_each 分支| DB
-    Redis -->|6. Pub/Sub 推播| API
-    API -->|7. WebSocket 即時更新| UI
-    Worker -->|依賴滿足時派送下一節點| Worker
-```
 
 ## 📦 內建支援的任務類型 (Supported Task Handlers)
 
@@ -53,10 +37,6 @@ flowchart TD
 | `echo` | 簡單回聲任務，用於測試系統連通性 |
 | `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
 | `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
-| `http_request` | 對外發送 HTTP 請求並回傳結果，內建 SSRF 防護（拒絕解析到內網/loopback/metadata IP 的網址） |
-| `job_search` | 模擬搜尋職缺並回傳一份 list，用來示範 `for_each` 動態展開 |
-| `tailor_cv` | 模擬依職缺 JD 客製化履歷內容 |
-| `job_apply` | 模擬投遞履歷 |
 
 ---
 
@@ -121,19 +101,6 @@ POST /workflows/
 }
 ```
 `depends_on` 可以填多個 key，支援分支與合併（真正的 DAG，不只是線性鏈）；任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`。
-
-一個帶動態 fan-out 的範例：先搜尋職缺，再對每一筆搜尋結果各自客製化履歷：
-```json
-POST /workflows/
-{
-  "name": "daily-job-search",
-  "steps": [
-    { "key": "search", "name": "search jobs", "task_type": "job_search", "payload": {"keyword": "backend engineer", "count": 3}, "depends_on": [] },
-    { "key": "tailor", "name": "tailor cv", "task_type": "tailor_cv", "for_each": "search", "payload": {"title": "{{item.title}}", "jd": "{{item.jd}}"}, "depends_on": [] }
-  ]
-}
-```
-`search` 任務成功後若回傳一份 list，`tailor` 這個模板步驟就會依 list 內每個項目各自展開成一份真正的任務（`tailor [1]`、`tailor [2]`、`tailor [3]`…），`payload` 裡的 `{{item}}` / `{{item.欄位}}` 會被換成該項目的實際值。目前僅支援單層展開（fan-out），尚未支援讓一般節點依賴動態節點做 fan-in/reduce。
 
 ### Schedules（週期性排程）
 | Method | Endpoint | 說明 |
