@@ -2,7 +2,14 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+import json 
+import re
 
+_STEP_REF = re.compile(r"\{\{\s*steps\.([a-zA-Z0-9_]+)\.result(?:\.[a-zA-Z0-9_]+)*\s*\}\}")
+_STEP_REF_SYNTAX = "{{steps.<key>.result}}"
+
+def _referenced_step_keys(payload: dict) -> set[str]:
+    return set(_STEP_REF.findall(json.dumps(payload, ensure_ascii=False)))
 
 class WorkflowStepCreate(BaseModel):
     key: str = Field(..., description="此步驟在這次請求內的本地識別碼，用來描述依賴關係，不是真正的 task id")
@@ -20,6 +27,8 @@ class WorkflowStepCreate(BaseModel):
             "或 '{{item.欄位名}}' 參照該項目的值。"
         ),
     )
+
+    reduce_of: str | None = Field(None, description="指向某個 for_each step 的 key。若設定，會將所有 for_each task 的結果合併成一個 list，並取代 for_each 本身建立一個新的 task（這是一個 reduce 操作）。")
 
 
 class WorkflowCreate(BaseModel):
@@ -43,11 +52,54 @@ class WorkflowCreate(BaseModel):
                     raise ValueError(f"Step '{key}' 不能依賴自己")
 
         for step in self.steps:
+            refs = _referenced_step_keys(step.payload)
+            if refs:
+                if step.for_each:
+                    raise ValueError(
+                        f"Step '{step.key}' 是動態展開步驟，payload 目前不支援 {_STEP_REF_SYNTAX} 參照；"
+                        f"請用 '{{{{item}}}}' 取得該項目的值"
+                    )
+                if step.reduce_of:
+                    raise ValueError(
+                        f"Step '{step.key}' 是 reduce 步驟，請用 '{{{{items}}}}' 取得上游結果"
+                    )
+                for ref in refs:
+                    if ref == step.key:
+                        raise ValueError(f"Step '{step.key}' 的 payload 不能參照自己的結果")
+                    if ref not in key_set:
+                        raise ValueError(f"Step '{step.key}' 的 payload 參照了不存在的 step '{ref}'")
+                    if ref not in step.depends_on:
+                        raise ValueError(
+                            f"Step '{step.key}' 的 payload 參照了 '{ref}' 的結果，"
+                            f"必須把 '{ref}' 加進 depends_on，否則無法保證它先執行"
+                        )
+
+            if step.for_each and step.reduce_of:
+                raise ValueError(f"Step '{step.key}' 不能同時 for_each 和 reduce_of")
+
+            if step.reduce_of:
+                if step.reduce_of not in key_set:
+                    raise ValueError(f"Step '{step.key}' 的 reduce_of 指向不存在的 step '{step.reduce_of}'")
+                if step.reduce_of == step.key:
+                    raise ValueError(f"Step '{step.key}' 不能 reduce 自己")
+                if not by_key[step.reduce_of].for_each:
+                    raise ValueError(
+                        f"Step '{step.key}' 的 reduce_of 目標 '{step.reduce_of}' 不是動態展開步驟；"
+                        f"reduce_of 只能指向有設 for_each 的 step"
+                    )
+                if step.depends_on:
+                    raise ValueError(
+                        f"Step '{step.key}' 是 reduce 步驟，依賴關係在 '{step.reduce_of}' 展開後自動決定，"
+                        f"不可自行指定 depends_on"
+                    )
+                continue
+                
             if not step.for_each:
                 for dep in step.depends_on:
                     if by_key[dep].for_each:
                         raise ValueError(
-                            f"Step '{step.key}' 不能依賴動態展開步驟 '{dep}'（目前不支援 fan-in/reduce）"
+                            f"Step '{step.key}' 不是 for_each 步驟，但依賴了動態展開步驟 '{dep}'；"
+                            f"要做 fan-in 請改用 reduce_of='{dep}'"
                         )
                 continue
 

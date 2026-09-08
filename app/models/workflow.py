@@ -39,6 +39,13 @@ class WorkflowStep(Base):
     task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=False, unique=True)
     # 此 step 要等哪些 task 完成才能派送(存 task id 字串陣列)
     depends_on: Mapped[List] = mapped_column(JSON, nullable=False, default=list)
+    # 非 None 代表這是 reduce 步驟，值為它要收斂的 for_each step key。
+    # 建立時 depends_on 是空的，等那組模板展開後才被填成所有展開出來的 task id。
+    reduce_of_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    # 建立時的本地識別碼，讓下游可以用 '{{steps.<key>.result}}' 參照這一步的結果。
+    # 只有 concrete step 有；for_each 展開出來的 task 共用同一個模板 key，
+    # 會造成參照歧義，所以一律留 None。
+    step_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
     
     workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="steps")

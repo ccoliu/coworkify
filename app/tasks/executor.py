@@ -73,6 +73,14 @@ def execute_task(self, task_id: str):
     finally:
         db.close()
 
+def _format_for_interpolation(value) -> str:
+    """
+    夾在字串中間的值怎麼轉成文字：字串原樣插入（不加引號），其餘轉成 JSON。
+    不用 str()，否則 dict / list 會變成 Python repr 的單引號格式，不是合法 JSON。
+    """
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 def record_task_success(db, task: Task, result, execute_time_ms: float = 0.0):
     """把一個 task 標記成功，寫 log、推播狀態、觸發 workflow 後續派送。"""
@@ -149,6 +157,18 @@ def advance_workflow(db, task: Task):
             if all(t.status == TaskStatus.SUCCESS for t in dep_tasks):
                 next_task = db.get(Task, s.task_id)
                 if next_task.status == TaskStatus.PENDING:
+                    if s.reduce_of_key:
+                        # 收斂：依照 depends_on 的順序把上游結果收成 list 再塞進 payload
+                        next_task.payload = render_reduce_payloads(
+                            next_task.payload, collect_step_results(db, s.depends_on)
+                        )
+                        db.commit()
+                    elif payload_has_step_refs(next_task.payload):
+                        # 參照：把 '{{steps.<key>.result}}' 換成上游步驟的實際結果
+                        next_task.payload = render_step_refs(
+                            next_task.payload, collect_results_by_key(db, workflow.id)
+                        )
+                        db.commit()
                     dispatch_task(next_task)
     
         # 檢查是否所有 task 都完成了
@@ -168,6 +188,10 @@ def advance_workflow(db, task: Task):
                 if str(current) in s.depends_on and s.task_id not in to_cancel_ids:
                     to_cancel_ids.add(s.task_id)
                     frontier.append(s.task_id)
+
+        for s in all_steps:
+            if s.reduce_of_key and not s.depends_on:
+                to_cancel_ids.add(s.task_id)
             
         for tid in to_cancel_ids:
             t = db.get(Task, tid)
@@ -207,6 +231,8 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
             workflow_id=workflow.id,
             task_id=key_to_task[step["key"]].id,
             depends_on=[str(key_to_task[dep].id) for dep in step.get("depends_on", [])],
+            reduce_of_key=step.get("reduce_of"),
+            step_key=step["key"],
         )
         db.add(ws)
         ws_list.append(ws)
@@ -232,7 +258,8 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
     db.refresh(workflow)
 
     for step, ws in zip(concrete_steps, ws_list):
-        if not step.get("depends_on"):
+        # reduce 步驟的 depends_on 也是空的，但它要等展開後才派送，不能當根節點
+        if not step.get("depends_on") and not step.get("reduce_of"):
             task = key_to_task[step["key"]]
             dispatch_task(task)
 
@@ -240,6 +267,7 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
 
 
 _ITEM_PLACEHOLDER = re.compile(r"\{\{\s*item(?:\.([a-zA-Z0-9_.]+))?\s*\}\}")
+_ITEMS_PLACEHOLDER = re.compile(r"\{\{\s*items\s*\}\}")
 
 
 def _resolve_item_path(item, path: str | None):
@@ -252,7 +280,6 @@ def _resolve_item_path(item, path: str | None):
         value = value[part]
     return value
 
-
 def render_payload(template: dict, item):
     """把 payload_template 裡的 '{{item}}' / '{{item.欄位}}' 換成該 for_each 項目的實際值"""
     def render_value(value):
@@ -262,7 +289,7 @@ def render_payload(template: dict, item):
             if full_match:
                 return _resolve_item_path(item, full_match.group(1))
             return _ITEM_PLACEHOLDER.sub(
-                lambda m: str(_resolve_item_path(item, m.group(1))), value
+                lambda m: _format_for_interpolation(_resolve_item_path(item, m.group(1))), value
             )
         if isinstance(value, dict):
             return {k: render_value(v) for k, v in value.items()}
@@ -271,6 +298,102 @@ def render_payload(template: dict, item):
         return value
 
     return render_value(template)
+
+def collect_step_results(db, task_ids: list[str]) -> list:
+    """依照 task_ids 的順序收回每個 task 最新一筆成功結果 (順序 = for_each 的項目順序) """
+    uuids = [uuid.UUID(t) for t in task_ids]
+    logs = db.scalars(
+        select(TaskLog)
+        .where(TaskLog.task_id.in_(uuids), TaskLog.status == TaskStatus.SUCCESS)
+        .order_by(TaskLog.created_at.asc())
+    ).all()
+    latest = {str(log.task_id): log.result for log in logs}
+    return [latest.get(tid) for tid in task_ids]
+
+_STEP_PLACEHOLDER = re.compile(
+    r"\{\{\s*steps\.([a-zA-Z0-9_]+)\.result((?:\.[a-zA-Z0-9_]+)*)\s*\}\}"
+)
+
+
+def payload_has_step_refs(payload) -> bool:
+    """便宜的預檢，避免每次派送都白跑一次 DB 查詢"""
+    return bool(_STEP_PLACEHOLDER.search(json.dumps(payload, ensure_ascii=False)))
+
+
+def collect_results_by_key(db, workflow_id) -> dict:
+    """收集這個 workflow 裡所有「有 step_key 且已成功」的步驟結果，組成 {key: result}"""
+    steps = db.scalars(
+        select(WorkflowStep).where(
+            WorkflowStep.workflow_id == workflow_id,
+            WorkflowStep.step_key.isnot(None),
+        )
+    ).all()
+    if not steps:
+        return {}
+
+    key_by_task = {s.task_id: s.step_key for s in steps}
+    logs = db.scalars(
+        select(TaskLog)
+        .where(TaskLog.task_id.in_(list(key_by_task)), TaskLog.status == TaskStatus.SUCCESS)
+        .order_by(TaskLog.created_at.asc())
+    ).all()
+    return {key_by_task[log.task_id]: log.result for log in logs}  # asc，後蓋前 = 最新
+
+
+def render_step_refs(template: dict, results_by_key: dict) -> dict:
+    """
+    把 payload 裡的 '{{steps.<key>.result}}' / '{{steps.<key>.result.<欄位>}}'
+    換成上游步驟的執行結果。整格就是 placeholder 時保留原型別，夾在字串裡則走
+    _format_for_interpolation。
+    """
+    def resolve(key: str, path: str):
+        value = results_by_key.get(key)
+        for part in filter(None, path.split(".")):
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+        return value
+
+    def render_value(value):
+        if isinstance(value, str):
+            full = _STEP_PLACEHOLDER.fullmatch(value.strip())
+            if full:
+                return resolve(full.group(1), full.group(2))
+            return _STEP_PLACEHOLDER.sub(
+                lambda m: _format_for_interpolation(resolve(m.group(1), m.group(2))), value
+            )
+        if isinstance(value, dict):
+            return {k: render_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [render_value(v) for v in value]
+        return value
+
+    return render_value(template)
+
+
+def render_reduce_payloads(template: dict, items: list) -> dict:
+    """
+    把 reduce 步驟 payload 裡的 '{{items}}' 換成上游所有動態 task 的結果 list。
+    整格就是 '{{items}}' 的話換成真正的 list；夾在字串裡則換成 JSON 字串
+    （不是 str()，這樣餵給 agent_step 的 instruction 才是合法 JSON）。
+    """
+    def render_value(value):
+        if isinstance(value, str):
+            if _ITEMS_PLACEHOLDER.fullmatch(value.strip()):
+                return items
+            return _ITEMS_PLACEHOLDER.sub(
+                lambda _: json.dumps(items, ensure_ascii=False), value
+            )
+        if isinstance(value, dict):
+            return {k: render_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [render_value(v) for v in value]
+        return value
+
+    rendered = render_value(template)
+    # 沒寫 placeholder 也保底給一份，免得 reduce task 收到空手
+    rendered.setdefault("items", items)
+    return rendered
 
 
 def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
@@ -329,13 +452,35 @@ def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
     for template in templates:
         template.expanded = True
 
+    # fan-in：把 reduce 步驟的 depends_on 填成這一組展開出來的所有 task id。
+    # 填完之後 advance_workflow 既有的派送迴圈就會在最後一個展開 task 成功時派送它。
+    template_keys = [t.key for t in templates]
+    reduce_steps = db.scalars(
+        select(WorkflowStep).where(
+            WorkflowStep.workflow_id == workflow.id,
+            WorkflowStep.reduce_of_key.in_(template_keys),
+        )
+    ).all()
+
+    ready_reduce_tasks: list[Task] = []
+    for ws in reduce_steps:
+        ws.depends_on = [
+            str(expanded_task_ids[i][ws.reduce_of_key]) for i in range(len(items))
+        ]
+        if not ws.depends_on:
+            # for_each 來源回傳空 list：沒有東西可等，直接帶著空結果派送，
+            # 否則這個 task 會永遠停在 PENDING，workflow 也永遠不會 SUCCESS
+            reduce_task = db.get(Task, ws.task_id)
+            reduce_task.payload = render_reduce_payloads(reduce_task.payload, [])
+            ready_reduce_tasks.append(reduce_task)
+
     db.commit()
 
     for task_ids in expanded_task_ids.values():
         for template in templates:
             if not template.depends_on_keys:
-                task_id = task_ids[template.key]
-                t = db.get(Task, task_id)
+                t = db.get(Task, task_ids[template.key])
                 dispatch_task(t)
 
-
+    for t in ready_reduce_tasks:
+        dispatch_task(t)

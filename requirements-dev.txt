@@ -1,0 +1,8 @@
+-r requirements.txt
+pytest>=8.0
+pytest-asyncio>=0.23
+
+# For the agent_step task type (app/tasks/handler.py). Codoctopus is not on
+# PyPI yet, so install it from a local checkout — the [anthropic] extra is
+# required for the default anthropic:* model:
+#   pip install -e "../../Portfolio/Codoctopus[anthropic]"

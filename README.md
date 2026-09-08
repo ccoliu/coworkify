@@ -39,6 +39,8 @@
 | `echo` | 簡單回聲任務，用於測試系統連通性 |
 | `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
 | `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
+| `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
+> 需要 worker 能 import `codoctopus` 才能使用 `agent_step`：本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，anthropic SDK 是 optional dependency；用 `ollama:` 模型則可省略），容器化部署時把 Codoctopus 原始碼一併 COPY 進 image 並在 Dockerfile 加一行 `pip install -e "./codoctopus[anthropic]"`（或未來發佈後改成版本化的套件依賴）。沒裝的話 `agent_step` 會在執行時丟出清楚的 `RuntimeError`，不會讓其他任務類型受影響。
 
 ---
 

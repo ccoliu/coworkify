@@ -1,5 +1,8 @@
-from email import message
+import asyncio
+import os
+import tempfile
 import time
+from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
 
@@ -96,6 +99,81 @@ def handle_tailor_cv(payload: Dict[str, Any]) -> Dict[str, Any]:
 def handle_job_apply(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"applied": True, "job_id": payload.get("job_id")}
 
+# 7. 執行一個 Codoctopus Plan step：Planner/Agent 決定「做什麼」，
+#    Coworkify 的 DAG 排程決定「什麼時候做」，這個 handler 是兩邊真正接起來的地方。
+def _agent_step_tool_factories():
+    """延遲 import codoctopus 的內建工具，讓沒用到 agent_step 時不需要裝 codoctopus。"""
+    from codoctopus.tools.filesystem import ListFilesTool, ReadFileTool, WriteFileTool
+    from codoctopus.tools.http import HttpRequestTool
+    from codoctopus.tools.testing import RunTestsTool
+
+    return {
+        "read_file": ReadFileTool,
+        "write_file": WriteFileTool,
+        "list_files": ListFilesTool,
+        "http_request": HttpRequestTool,
+        "run_tests": RunTestsTool,
+    }
+
+
+def _resolve_agent_step_workspace(explicit: str | None) -> Path:
+    """
+    每個 agent_step task 都要有一個 workspace 給檔案類工具用。沒有明確指定的話，
+    退回一個共用的暫存目錄——同一個 workflow 的多個 step 若想共用檔案，
+    呼叫端（例如 CoworkifyExecutor）應該明確傳入同一個 workspace 路徑。
+    """
+    workspace = Path(explicit) if explicit else (
+        Path(os.getenv("AGENT_STEP_WORKSPACE_ROOT", tempfile.gettempdir())) / "codoctopus-agent-steps"
+    )
+    workspace.mkdir(parents=True, exist_ok=True)
+    return workspace
+
+
+def handle_agent_step(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    payload:
+      role (str, 必填): agent 的 system prompt
+      instruction (str, 必填): 這個 step 要做的事
+      model (str, 選填): "provider:model"，例如 "anthropic:claude-opus-5"；
+        不給的話讀環境變數 AGENT_STEP_DEFAULT_MODEL
+      tools (list[str], 選填): 從 read_file / write_file / list_files /
+        http_request / run_tests 裡選
+      workspace (str, 選填): 檔案類工具的操作目錄
+    """
+    role = payload.get("role")
+    instruction = payload.get("instruction")
+    if not role or not instruction:
+        raise ValueError("payload.role and payload.instruction are required for agent_step task")
+
+    try:
+        from codoctopus.agents import Agent
+        from codoctopus.llm import get_provider
+        from codoctopus.tools import ToolRegistry
+    except ImportError as exc:
+        raise RuntimeError(
+            "The 'agent_step' task type requires the 'codoctopus' package to be installed "
+            "in this worker's environment. Install it with: pip install -e <path-to-codoctopus>"
+        ) from exc
+
+    model_ref = payload.get("model") or os.getenv("AGENT_STEP_DEFAULT_MODEL", "anthropic:claude-opus-5")
+    provider = get_provider(model_ref)
+
+    tool_names = payload.get("tools") or []
+    tools = None
+    if tool_names:
+        factories = _agent_step_tool_factories()
+        unknown = [name for name in tool_names if name not in factories]
+        if unknown:
+            raise ValueError(f"Unknown tool(s) for agent_step: {unknown}. Available: {sorted(factories)}")
+        workspace = _resolve_agent_step_workspace(payload.get("workspace"))
+        tools = ToolRegistry([factories[name]() for name in tool_names], workspace=workspace)
+
+    agent = Agent(provider, system=role, tools=tools)
+    result = asyncio.run(agent.run(instruction))
+
+    return {"output": result.text}
+
+
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數
 TASK_REGISTRY = {
     "echo": handle_echo,
@@ -105,6 +183,7 @@ TASK_REGISTRY = {
     "job_search": handle_job_search,
     "tailor_cv": handle_tailor_cv,
     "job_apply": handle_job_apply,
+    "agent_step": handle_agent_step,
 }
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數

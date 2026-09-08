@@ -6,7 +6,8 @@ from sqlalchemy import select
 
 from app.db import get_db
 from app.models.task import Task, TaskStatus
-from app.schemas.task import TaskCreate, TaskResponse
+from app.models.task_log import TaskLog
+from app.schemas.task import TaskCreate, TaskResponse, TaskResultResponse
 from app.tasks.executor import execute_task, dispatch_task
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
@@ -62,6 +63,23 @@ def get_task_by_id(task_id: UUID, db: session = Depends(get_db)):
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+@router.get("/{task_id}/result", response_model=TaskResultResponse)
+def get_task_result(task_id: UUID, db: session = Depends(get_db)):
+    task = db.get(Task, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    log = db.scalars(
+        select(TaskLog).where(TaskLog.task_id == task_id).order_by(TaskLog.created_at.desc())
+    ).first()
+
+    return TaskResultResponse(
+        task_id=task_id,
+        status=task.status,
+        result=log.result if log else None,
+        error_message=log.error_message if log else None,
+    )
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_task(task_id: UUID, db: session = Depends(get_db)):

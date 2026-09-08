@@ -25,3 +25,13 @@ class TaskResponse(BaseModel):
     scheduled_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
+
+class TaskResultResponse(BaseModel):
+    """
+    最新一筆 TaskLog 的內容。任務結果目前只會透過 /ws/tasks 廣播一次，事後查不到，
+    這個 endpoint 補上事後查詢的路徑（例如 CoworkifyExecutor 這種輪詢的呼叫端）。
+    """
+    task_id: UUID
+    status: str
+    result: Optional[Any] = None
+    error_message: Optional[str] = None
