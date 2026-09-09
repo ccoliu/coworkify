@@ -54,7 +54,10 @@ services:
     build: .
     container_name: coworkify_worker
     restart: always
-    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=4
+    # -Q celery: this worker only ever consumes the default queue. agent_step
+    # tasks (the only ones needing codoctopus + LLM SDKs) go to worker-agent
+    # below instead, so this image and its dependency footprint stay untouched.
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=4 -Q celery
     volumes:
       - .:/app
     environment:
@@ -66,7 +69,42 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    
+
+  # Dedicated worker for the agent_step task type — the only one that needs
+  # codoctopus and an LLM SDK installed. Kept as its own image/queue so the
+  # `worker` service above never needs those dependencies. Opt-in via
+  # `docker compose --profile agent up`, since it needs CODOCTOPUS_PATH (a
+  # local Codoctopus checkout) and an LLM provider's credentials to be useful.
+  worker-agent:
+    profiles: ["agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+      additional_contexts:
+        codoctopus: ${CODOCTOPUS_PATH:-./.codoctopus-path-not-set}
+    container_name: coworkify_worker_agent
+    restart: always
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2 -Q agent_step -n agent_worker@%h
+    volumes:
+      - .:/app
+      - ${CODOCTOPUS_PATH:-./.codoctopus-path-not-set}:/codoctopus
+    # Any provider credentials the LLM SDKs read from the environment
+    # (ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENAI_BASE_URL for an
+    # OpenAI-compatible local server, ...) — put them in .env and they reach
+    # this worker without needing to be named here one by one.
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET}
+      - AGENT_STEP_DEFAULT_MODEL=${AGENT_STEP_DEFAULT_MODEL:-anthropic:claude-opus-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   frontend:
     build: ./frontend
     container_name: coworkify_frontend

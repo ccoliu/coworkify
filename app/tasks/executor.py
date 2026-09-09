@@ -4,7 +4,7 @@ import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
-from app.celery_app import celery_app
+from app.celery_app import celery_app, DEDICATED_QUEUES
 from app.db import SessionLocal
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
@@ -130,9 +130,16 @@ def record_task_failure(db, task: Task, error_message: str, execute_time_ms: flo
         return None
 
 
+def queue_for_task_type(task_type: str) -> str:
+    """task_type 該去哪條 queue：多數走預設 queue，少數（如 agent_step）走專屬 queue。"""
+    return DEDICATED_QUEUES.get(task_type, "celery")
+
+
 def dispatch_task(task: Task):
-    """派送一個 pending task 進 Celery 佇列給共用 worker 執行"""
-    execute_task.apply_async(args=[str(task.id)], priority=task.priority)
+    """派送一個 pending task 進 Celery 佇列——依 task_type 決定要進哪條 queue。"""
+    execute_task.apply_async(
+        args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type)
+    )
         
 def advance_workflow(db, task: Task):
     """task 成功/失敗後，更新 workflow 狀態並派送後續節點"""

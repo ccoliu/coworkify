@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 安裝 PostgreSQL 連線需要的系統依賴
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安裝 Python 套件
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 只有這個 image（agent_step 專屬 worker）需要 codoctopus。來源是 docker-compose.yml
+# 裡宣告的 `codoctopus` additional build context，指向本機的 Codoctopus checkout
+# （在 .env 設定 CODOCTOPUS_PATH）。之後 codoctopus 若發佈成正式套件，這裡可以
+# 換成一般的 pip 依賴。
+# [all] rather than a single provider extra: which model a step actually
+# uses is a runtime choice (AGENT_STEP_DEFAULT_MODEL / payload.model), so the
+# image shouldn't have to be rebuilt just to switch providers.
+COPY --from=codoctopus . /codoctopus
+RUN pip install --no-cache-dir -e "/codoctopus[all]"
+
+# 複製專案原始碼
+COPY . .
+
+# 只消費 agent_step queue；一般任務類型由 worker service 處理。
+CMD ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=info", "-Q", "agent_step"]

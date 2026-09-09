@@ -40,7 +40,9 @@
 | `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
 | `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
-> 需要 worker 能 import `codoctopus` 才能使用 `agent_step`：本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，anthropic SDK 是 optional dependency；用 `ollama:` 模型則可省略），容器化部署時把 Codoctopus 原始碼一併 COPY 進 image 並在 Dockerfile 加一行 `pip install -e "./codoctopus[anthropic]"`（或未來發佈後改成版本化的套件依賴）。沒裝的話 `agent_step` 會在執行時丟出清楚的 `RuntimeError`，不會讓其他任務類型受影響。
+> 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。
+>
+> 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
 
 ---
 

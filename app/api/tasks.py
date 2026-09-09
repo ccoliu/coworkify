@@ -8,7 +8,7 @@ from app.db import get_db
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
 from app.schemas.task import TaskCreate, TaskResponse, TaskResultResponse
-from app.tasks.executor import execute_task, dispatch_task
+from app.tasks.executor import execute_task, dispatch_task, queue_for_task_type
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
 
@@ -31,7 +31,12 @@ def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
 
     if db_task.scheduled_at:
         # 指定時間執行
-        execute_task.apply_async(args=[str(db_task.id)], eta=db_task.scheduled_at, priority=db_task.priority)
+        execute_task.apply_async(
+            args=[str(db_task.id)],
+            eta=db_task.scheduled_at,
+            priority=db_task.priority,
+            queue=queue_for_task_type(db_task.task_type),
+        )
     else:
         # 立即執行
         dispatch_task(db_task)
