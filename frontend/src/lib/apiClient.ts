@@ -1,6 +1,7 @@
 import { getAuthToken } from './authStorage'
 import type {
   AuthResponse,
+  PromoteWorkflowToSchedule,
   Task,
   TaskCreate,
   TaskListFilters,
@@ -108,6 +109,13 @@ export function getWorkflow(id: string): Promise<Workflow> {
 
 export function createWorkflow(workflow: WorkflowCreate): Promise<Workflow> {
   return request('/workflows/', { method: 'POST', body: JSON.stringify(workflow) })
+}
+
+export function promoteWorkflowToSchedule(
+  id: string,
+  body: PromoteWorkflowToSchedule,
+): Promise<WorkflowSchedule> {
+  return request(`/workflows/${id}/promote-to-schedule`, { method: 'POST', body: JSON.stringify(body) })
 }
 
 export function listSchedules(): Promise<WorkflowSchedule[]> {

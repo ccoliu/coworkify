@@ -1,7 +1,7 @@
 from pydantic._internal._known_annotated_metadata import UUID_CONSTRAINTS
 import uuid
 from datetime import datetime
-from typing import List
+from typing import Any, List, Optional
 from enum import Enum
 from sqlalchemy import UUID, String, DateTime, JSON, ForeignKey, Integer, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,6 +22,10 @@ class Workflow(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default=WorkFlowStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+    # 建立時的原始 WorkflowStepCreate dict list，供「把這個 workflow 升級成排程」
+    # 使用（一個 workflow 建立後只留展開的 Task/WorkflowStep，原始樣板本來不會保留）。
+    # 舊資料（此欄位新增前建立的 workflow）會是 None。
+    steps_template: Mapped[Optional[List[Any]]] = mapped_column(JSON, nullable=True, default=None)
 
     steps: Mapped[List["WorkflowStep"]] = relationship(
         "WorkflowStep", back_populates="workflow", cascade="all, delete-orphan"

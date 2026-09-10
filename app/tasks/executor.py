@@ -211,7 +211,9 @@ def advance_workflow(db, task: Task):
     
 def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
     """建立 workflow + 派送根節點；供 API 與排程共用"""
-    workflow = Workflow(name=name, status="pending")
+    # 存一份原始樣板，讓這個 workflow 之後可以直接被「升級成排程」
+    # （見 app/api/workflows.py 的 promote-to-schedule），不用重新手動輸入一次 steps。
+    workflow = Workflow(name=name, status="pending", steps_template=steps)
     db.add(workflow)
     db.flush()
 

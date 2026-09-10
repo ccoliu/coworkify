@@ -156,3 +156,6 @@ class WorkflowResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     steps: List[WorkflowStepResponse]
+    # None for a workflow created before this field existed — the frontend
+    # uses this to decide whether "promote to schedule" is even offered.
+    steps_template: Optional[List[Dict[str, Any]]] = None

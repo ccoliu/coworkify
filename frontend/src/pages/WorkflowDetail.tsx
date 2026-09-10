@@ -1,15 +1,19 @@
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { getWorkflow } from '../lib/apiClient'
 import { formatDateTime, shortId } from '../lib/format'
+import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
 import { StatusBadge } from '../components/StatusBadge'
 import { computeLevels } from '../features/workflows/dagLayout'
+import { PromoteToScheduleModal } from '../features/workflows/PromoteToScheduleModal'
 
 export function WorkflowDetail() {
     const { id } = useParams<{ id: string }>()
+    const [showScheduleModal, setShowScheduleModal] = useState(false)
 
     const {
         data: workflow,
@@ -48,16 +52,31 @@ export function WorkflowDetail() {
 
     return (
         <div className="flex flex-col gap-5">
-            <div>
-                <Link to="/workflows" className="text-sm text-ink-muted hover:text-ink">
-                    ← Workflows
-                </Link>
-                <div className="mt-1 flex items-center gap-3">
-                    <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
-                    <StatusBadge status={workflow.status} />
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <Link to="/workflows" className="text-sm text-ink-muted hover:text-ink">
+                        ← Workflows
+                    </Link>
+                    <div className="mt-1 flex items-center gap-3">
+                        <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
+                        <StatusBadge status={workflow.status} />
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
                 </div>
-                <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
+                {workflow.steps_template && (
+                    <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
+                        Schedule this workflow
+                    </Button>
+                )}
             </div>
+
+            {showScheduleModal && (
+                <PromoteToScheduleModal
+                    workflowId={workflow.id}
+                    workflowName={workflow.name}
+                    onClose={() => setShowScheduleModal(false)}
+                />
+            )}
 
             <Card className="p-5">
                 <dl className="grid grid-cols-2 gap-5 sm:grid-cols-4">

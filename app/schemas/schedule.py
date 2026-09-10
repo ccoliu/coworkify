@@ -19,6 +19,21 @@ class WorkflowScheduleCreate(BaseModel):
             raise ValueError("Invalid cron expression")
         return v
 
+class PromoteWorkflowToSchedule(BaseModel):
+    """Turn an already-created Workflow into a recurring Schedule, reusing its stored step template."""
+
+    name: str = Field(..., max_length=255)
+    cron_expression: str = Field(..., description="標準5欄位cron，例如每天9點：'0 9 * * *'")
+    enabled: bool = True
+
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron(cls, v: str) -> str:
+        if not croniter.is_valid(v):
+            raise ValueError("Invalid cron expression")
+        return v
+
+
 class WorkflowScheduleUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     cron_expression: Optional[str] = None

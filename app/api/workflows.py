@@ -1,4 +1,5 @@
 from app.tasks.executor import create_workflow_from_steps
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,11 +8,15 @@ from sqlalchemy import select
 
 from app.db import get_db
 from app.models.task import Task
+from app.models.user import User
 from app.models.workflow import Workflow, WorkflowStep
+from app.models.schedule import WorkflowSchedule
 from app.schemas.workflow import WorkflowCreate, WorkflowResponse
+from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
 from app.tasks.executor import execute_task, create_workflow_from_steps
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
+from app.core.cron import compute_next_run
 
 router = APIRouter(
     prefix='/workflows',
@@ -61,6 +66,39 @@ def get_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
 
     _attach_task_details(db, workflow.steps)
-    return workflow        
+    return workflow
 
-    
+@router.post(
+    "/{workflow_id}/promote-to-schedule",
+    response_model=WorkflowScheduleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def promote_workflow_to_schedule(
+    workflow_id: UUID,
+    payload: PromoteWorkflowToSchedule,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """把一個已經建立過的 workflow 註冊成週期性排程，直接沿用它當初的 step 樣板。"""
+    workflow = db.get(Workflow, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if not workflow.steps_template:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This workflow has no stored step template (it was created before this feature existed) "
+            "— recreate it via POST /workflows/ to enable scheduling.",
+        )
+
+    schedule = WorkflowSchedule(
+        name=payload.name,
+        cron_expression=payload.cron_expression,
+        steps=workflow.steps_template,
+        enabled=payload.enabled,
+        created_by=current_user.id,
+        next_run_at=compute_next_run(payload.cron_expression, datetime.utcnow()),
+    )
+    db.add(schedule)
+    db.commit()
+    db.refresh(schedule)
+    return schedule

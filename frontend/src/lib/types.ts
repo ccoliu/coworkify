@@ -82,6 +82,9 @@ export interface Workflow {
   created_at: string
   updated_at: string
   steps: WorkflowStep[]
+  // null for a workflow created before this field existed — such a
+  // workflow can't be promoted to a schedule (there's no template to reuse).
+  steps_template: WorkflowStepCreate[] | null
 }
 
 export interface WorkflowStepCreate {
@@ -128,6 +131,12 @@ export interface WorkflowScheduleCreate {
   name: string
   cron_expression: string
   steps: WorkflowStepCreate[]
+  enabled: boolean
+}
+
+export interface PromoteWorkflowToSchedule {
+  name: string
+  cron_expression: string
   enabled: boolean
 }
 
