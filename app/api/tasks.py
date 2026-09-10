@@ -2,11 +2,12 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import session
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db import get_db
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
+from app.models.workflow import WorkflowStep, WorkflowStepTemplate
 from app.schemas.task import TaskCreate, TaskResponse, TaskResultResponse
 from app.tasks.executor import execute_task, dispatch_task, queue_for_task_type
 from app.core.security import get_current_user
@@ -92,6 +93,30 @@ def delete_task(task_id: UUID, db: session = Depends(get_db)):
     task = db.scalars(stmt).first()
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # WorkflowStep.task_id / WorkflowStepTemplate.for_each_task_id are FKs to
+    # tasks.id with no ON DELETE CASCADE — deleting a task that's part of a
+    # workflow used to hit an unhandled DB IntegrityError (500). There is
+    # also currently no way to delete a whole workflow (which would need to
+    # clean up its tasks too), so this stays a clear refusal rather than a
+    # silent cascade that could leave a workflow with missing steps.
+    in_workflow = db.scalars(
+        select(WorkflowStep.id).where(WorkflowStep.task_id == task_id)
+    ).first() or db.scalars(
+        select(WorkflowStepTemplate.id).where(WorkflowStepTemplate.for_each_task_id == task_id)
+    ).first()
+    if in_workflow is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This task is part of a workflow and can't be deleted on its own.",
+        )
+
+    # TaskLog.task_id is the same kind of FK, but its rows are just this
+    # task's own execution history — nothing else references them, so unlike
+    # a workflow they're safe (and correct) to delete along with the task
+    # instead of refusing. Without this, virtually no task could ever be
+    # deleted: even a single instantly-completed run already writes one.
+    db.execute(delete(TaskLog).where(TaskLog.task_id == task_id))
     db.delete(task)
     db.commit()
     return None
