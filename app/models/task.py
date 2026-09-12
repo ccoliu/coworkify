@@ -29,5 +29,8 @@ class Task(Base):
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    # 非 None 代表這個 task 被「刪除」了：軟刪除，資料留著（給 workflow 詳情頁、
+    # TaskLog 稽核紀錄用），只是從一般查詢（列表、單筆查詢）隱藏起來。
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now(), onupdate=func.now())

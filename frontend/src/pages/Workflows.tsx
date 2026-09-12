@@ -1,17 +1,36 @@
-import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { listWorkflows } from '../lib/apiClient'
+import { listWorkflows, ApiError } from '../lib/apiClient'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { Spinner } from '../components/Spinner'
 import { CreateWorkflowModal } from '../features/workflows/CreateWorkflowModal'
 import { WorkflowTable } from '../features/workflows/WorkflowTable'
+import { useToast } from '../context/ToastContext'
+import { deleteWorkflow } from '../lib/apiClient'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+
 
 const PAGE_SIZE = 20
 
 export function Workflows() {
     const [offset, setOffset] = useState(0)
+    const navigate = useNavigate()
     const [showCreate, setShowCreate] = useState(false)
+
+    const queryClient = useQueryClient()
+    const { push } = useToast()
+
+    const remove = useMutation({
+        mutationFn: deleteWorkflow,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            push('Workflow deleted', 'success')
+        },
+        onError: (err) => {
+            push(err instanceof ApiError ? err.message : 'Failed to delete workflow', 'error')
+        },
+    })
 
     const { data: workflows, isLoading, isError } = useQuery({
         queryKey: ['workflows', offset],
@@ -28,7 +47,7 @@ export function Workflows() {
                         dependencies succeed.
                     </p>
                 </div>
-                <Button variant="primary" onClick={() => setShowCreate(true)}>
+                <Button variant="primary" onClick={() => navigate("/workflows/new")}>
                     New workflow
                 </Button>
             </div>
@@ -60,7 +79,7 @@ export function Workflows() {
                         Failed to load workflows.
                     </div>
                 ) : (
-                    <WorkflowTable workflows={workflows ?? []} />
+                    <WorkflowTable workflows={workflows ?? []} onDelete={remove.mutate} />
                 )}
             </Card>
 

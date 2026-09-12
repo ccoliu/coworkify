@@ -6,7 +6,7 @@ import { Button } from '../../components/Button'
 import { Input, Label } from '../../components/Field'
 import { Modal } from '../../components/Modal'
 import { useToast } from '../../context/ToastContext'
-import { WorkflowStepsEditor, type StepDraft } from '../workflows/WorkflowStepsEditor'
+import { effectiveDependsOn, WorkflowStepsEditor, type StepDraft } from '../workflows/WorkflowStepsEditor'
 import { useStepsEditor } from '../workflows/useStepsEditor'
 
 const CRON_PRESETS = [
@@ -25,6 +25,8 @@ function stepsToDrafts(steps: WorkflowSchedule['steps']): StepDraft[] {
         maxRetries: s.max_retries,
         dependsOnUids: s.depends_on,
         forEachUid: s.for_each ?? null,
+        branchOfUid: s.branch_of ?? null,
+        branchWhen: s.branch_when ?? null,
     }))
 }
 
@@ -50,8 +52,10 @@ export function EditScheduleModal({ schedule, onClose }: { schedule: WorkflowSch
                     payload: s.payload,
                     priority: s.priority,
                     max_retries: s.maxRetries,
-                    depends_on: s.dependsOnUids,
+                    depends_on: effectiveDependsOn(s),
                     for_each: s.forEachUid ?? undefined,
+                    branch_of: s.branchOfUid ?? undefined,
+                    branch_when: s.branchWhen ?? undefined,
                 })),
             }),
         onSuccess: () => {
@@ -69,7 +73,7 @@ export function EditScheduleModal({ schedule, onClose }: { schedule: WorkflowSch
         mutation.mutate()
     }
 
-    const canSubmit = name.trim() && cron.trim() && steps.every((s) => s.name.trim())
+    const canSubmit = name.trim() && cron.trim() && steps.every((s) => s.name.trim() && s.taskType)
 
     return (
         <Modal

@@ -1,19 +1,40 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { getWorkflow } from '../lib/apiClient'
-import { formatDateTime, shortId } from '../lib/format'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ApiError, deleteWorkflow, getWorkflow } from '../lib/apiClient'
+import { formatDateTime } from '../lib/format'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
 import { StatusBadge } from '../components/StatusBadge'
-import { computeLevels } from '../features/workflows/dagLayout'
 import { PromoteToScheduleModal } from '../features/workflows/PromoteToScheduleModal'
+import { StepDetailPanel } from '../features/workflows/StepDetailPanel'
+import { WorkflowCanvas } from '../features/workflows/WorkflowCanvas'
+import { useToast } from '../context/ToastContext'
+import { useWs } from '../context/WsContext'
+import { useWideLayout } from '../context/LayoutContext'
 
 export function WorkflowDetail() {
     const { id } = useParams<{ id: string }>()
     const [showScheduleModal, setShowScheduleModal] = useState(false)
+    const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+    const queryClient = useQueryClient()
+    const navigate = useNavigate()
+    const { push } = useToast()
+    const { events, status: wsStatus } = useWs()
+
+    const remove = useMutation({
+        mutationFn: deleteWorkflow,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            push('Workflow deleted', 'success')
+            navigate('/workflows')
+        },
+        onError: (err) => {
+            push(err instanceof ApiError ? err.message : 'Failed to delete workflow', 'error')
+        },
+    })
 
     const {
         data: workflow,
@@ -23,8 +44,24 @@ export function WorkflowDetail() {
         queryKey: ['workflow', id],
         queryFn: () => getWorkflow(id as string),
         enabled: !!id,
-        refetchInterval: (query) => (query.state.data?.status === 'pending' ? 1500 : false),
+        // WS 推的是 task 事件，workflow 本身的 status 是 worker 在最後一個 task 收尾時
+        // 才寫進 DB 的，可能比事件晚一點到，所以執行中仍留一個慢速輪詢當保險。
+        refetchInterval: (query) => {
+            if (query.state.data?.status !== 'pending') return false
+            return wsStatus === 'open' ? 5000 : 1500
+        },
     })
+
+    // 這個 workflow 底下任何 task 有狀態變化就重抓一次，省掉 1.5 秒輪詢。
+    // 用 join 出來的字串當相依值（而不是 workflow 物件），避免「重抓 → 新物件 →
+    // 再重抓」的無窮迴圈。
+    const stepTaskIds = workflow?.steps.map((s) => s.task_id).join(',') ?? ''
+    useEffect(() => {
+        if (!id || events.length === 0 || !stepTaskIds) return
+        const ids = new Set(stepTaskIds.split(','))
+        if (!events.some((e) => ids.has(e.task_id))) return
+        queryClient.invalidateQueries({ queryKey: ['workflow', id] })
+    }, [events, stepTaskIds, id, queryClient])
 
     if (isLoading) {
         return (
@@ -47,8 +84,7 @@ export function WorkflowDetail() {
         )
     }
 
-    const byTaskId = new Map(workflow.steps.map((s) => [s.task_id, s]))
-    const levels = computeLevels(workflow.steps)
+    const selectedStep = workflow.steps.find((s) => s.task_id === selectedTaskId) ?? null
 
     return (
         <div className="flex flex-col gap-5">
@@ -68,6 +104,14 @@ export function WorkflowDetail() {
                         Schedule this workflow
                     </Button>
                 )}
+                <Button
+                    variant="danger"
+                    onClick={() => {
+                        if (confirm(`Delete workflow "${workflow.name}"?`)) remove.mutate(workflow.id)
+                    }}
+                >
+                    Delete
+                </Button>
             </div>
 
             {showScheduleModal && (
@@ -95,35 +139,18 @@ export function WorkflowDetail() {
                 </dl>
             </Card>
 
-            <Card className="overflow-x-auto p-5">
-                <h2 className="mb-4 text-sm font-semibold text-ink">Pipeline</h2>
-                <div className="flex items-start gap-6">
-                    {levels.map((level, i) => (
-                        <div key={i} className="flex items-center gap-6">
-                            <div className="flex flex-col gap-3">
-                                {level.map((step) => (
-                                    <div key={step.id} className="w-56 rounded-lg border border-border bg-plane p-3">
-                                        <span className="truncate text-sm font-medium text-ink">
-                                            {step.task_name ?? shortId(step.task_id)}
-                                        </span>
-                                        <div className="mt-1 flex items-center justify-between">
-                                            <span className="font-mono text-xs text-ink-muted">{step.task_type}</span>
-                                            <StatusBadge status={step.task_status ?? 'pending'} />
-                                        </div>
-                                        {step.depends_on.length > 0 && (
-                                            <div className="mt-2 text-xs text-ink-muted">
-                                                depends on:{' '}
-                                                {step.depends_on
-                                                    .map((depId) => byTaskId.get(depId)?.task_name ?? shortId(depId))
-                                                    .join(', ')}
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                            {i < levels.length - 1 && <span className="text-lg text-ink-muted">→</span>}
-                        </div>
-                    ))}
+            <Card className="overflow-hidden p-0">
+                <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">
+                    <div className="h-[380px] min-w-0 flex-1 lg:h-auto">
+                        <WorkflowCanvas
+                            steps={workflow.steps}
+                            selectedTaskId={selectedTaskId}
+                            onSelect={setSelectedTaskId}
+                        />
+                    </div>
+                    {selectedStep && (
+                        <StepDetailPanel step={selectedStep} onClose={() => setSelectedTaskId(null)} />
+                    )}
                 </div>
             </Card>
         </div>

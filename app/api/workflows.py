@@ -4,12 +4,12 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, delete, update
 
 from app.db import get_db
 from app.models.task import Task
 from app.models.user import User
-from app.models.workflow import Workflow, WorkflowStep
+from app.models.workflow import Workflow, WorkflowStep, WorkflowStepTemplate
 from app.models.schedule import WorkflowSchedule
 from app.schemas.workflow import WorkflowCreate, WorkflowResponse
 from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
@@ -102,3 +102,24 @@ def promote_workflow_to_schedule(
     db.commit()
     db.refresh(schedule)
     return schedule
+
+@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
+    workflow = db.get(Workflow, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+
+    task_ids = [s.task_id for s in workflow.steps]
+
+    db.execute(delete(WorkflowStepTemplate).where(WorkflowStepTemplate.workflow_id == workflow_id))
+    db.execute(delete(WorkflowStep).where(WorkflowStep.workflow_id == workflow_id))
+    # 軟刪除：Task 的列（和它的 TaskLog）留著，只是標記成已刪除。
+    db.execute(
+        update(Task)
+        .where(Task.id.in_(task_ids), Task.deleted_at.is_(None))
+        .values(deleted_at=datetime.utcnow())
+    )
+
+    db.delete(workflow)
+    db.commit()
+    return None

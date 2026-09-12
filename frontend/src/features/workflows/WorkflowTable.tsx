@@ -3,8 +3,9 @@ import { formatRelativeTime, shortId } from '../../lib/format'
 import type { Workflow } from '../../lib/types'
 import { EmptyState } from '../../components/EmptyState'
 import { StatusBadge } from '../../components/StatusBadge'
+import { Button } from '../../components/Button'
 
-export function WorkflowTable({ workflows }: { workflows: Workflow[] }) {
+export function WorkflowTable({ workflows, onDelete }: { workflows: Workflow[]; onDelete: (id: string) => void }) {
     if (workflows.length === 0) {
         return (
             <EmptyState
@@ -23,6 +24,7 @@ export function WorkflowTable({ workflows }: { workflows: Workflow[] }) {
                         <th className="px-4 py-2.5 font-medium">Status</th>
                         <th className="px-4 py-2.5 font-medium">Steps</th>
                         <th className="px-4 py-2.5 font-medium">Updated</th>
+                        <th className="px-4 py-2.5" />
                     </tr>
                 </thead>
                 <tbody>
@@ -43,6 +45,16 @@ export function WorkflowTable({ workflows }: { workflows: Workflow[] }) {
                                     {done}/{wf.steps.length}
                                 </td>
                                 <td className="px-4 py-3 text-ink-muted">{formatRelativeTime(wf.updated_at)}</td>
+                                <td className="px-4 py-3 text-right">
+                                    <Button
+                                        variant="danger"
+                                        onClick={() => {
+                                            if (confirm(`Delete workflow "${wf.name}"?`)) onDelete(wf.id)
+                                        }}
+                                    >
+                                        Delete
+                                    </Button>
+                                </td>
                             </tr>
                         )
                     })}

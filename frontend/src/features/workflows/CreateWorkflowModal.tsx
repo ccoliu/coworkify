@@ -6,7 +6,7 @@ import { Button } from '../../components/Button'
 import { Input, Label } from '../../components/Field'
 import { Modal } from '../../components/Modal'
 import { useToast } from '../../context/ToastContext'
-import { makeStep, WorkflowStepsEditor } from './WorkflowStepsEditor'
+import { effectiveDependsOn, makeStep, WorkflowStepsEditor } from './WorkflowStepsEditor'
 import { useStepsEditor } from './useStepsEditor'
 
 export function CreateWorkflowModal({ onClose }: { onClose: () => void }) {
@@ -44,13 +44,15 @@ export function CreateWorkflowModal({ onClose }: { onClose: () => void }) {
                 payload: s.payload,
                 priority: s.priority,
                 max_retries: s.maxRetries,
-                depends_on: s.dependsOnUids,
+                depends_on: effectiveDependsOn(s),
                 for_each: s.forEachUid ?? undefined,
+                branch_of: s.branchOfUid ?? undefined,
+                branch_when: s.branchWhen ?? undefined,
             })),
         })
     }
 
-    const canSubmit = name.trim() && steps.every((s) => s.name.trim())
+    const canSubmit = name.trim() && steps.every((s) => s.name.trim() && s.taskType)
 
     return (
         <Modal

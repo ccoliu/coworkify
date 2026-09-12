@@ -36,16 +36,32 @@ export interface TaskListFilters {
   offset: number
 }
 
-export const TASK_TYPES = [
-  'echo',
-  'heavy_computation',
-  'flaky_task',
-  // 'http_request',
-  // 'job_search',
-  // 'tailor_cv',
-  // 'job_apply',
-] as const
-export type TaskType = (typeof TASK_TYPES)[number]
+export type TaskFieldKind = 'string' | 'number' | 'boolean' | 'text' | 'select' | 'multiselect' | 'code'
+
+export interface TaskFieldOption {
+  value: string
+  label: string
+}
+
+export interface TaskFieldSpec {
+  key: string
+  label: string
+  kind: TaskFieldKind
+  default: string | number | boolean | string[] | null
+  required: boolean
+  help?: string | null
+  options?: TaskFieldOption[] | null
+  upload_accept?: string | null
+  // kind === 'code' 時的語法標記，目前支援 'python' / 'json'
+  language?: string | null
+}
+
+export interface TaskTypeSpec {
+  task_type: string
+  label: string
+  description: string
+  fields: TaskFieldSpec[]
+}
 
 export const TASK_STATUSES: TaskStatus[] = [
   'pending',
@@ -70,6 +86,12 @@ export interface WorkflowStep {
   id: string
   task_id: string
   depends_on: string[]
+  // 分支：branch_of_key 指向某個 condition step 的 key（不是 task id）
+  branch_of_key: string | null
+  branch_when: 'true' | 'false' | null
+  // 建立當下的本地 key，畫布用它把 branch_of_key 解析回 task_id
+  step_key: string | null
+  reduce_of_key: string | null
   task_status: TaskStatus | null
   task_name: string | null
   task_type: string | null
@@ -96,6 +118,9 @@ export interface WorkflowStepCreate {
   max_retries: number
   depends_on: string[]
   for_each?: string | null
+  reduce_of?: string | null
+  branch_of?: string | null
+  branch_when?: 'true' | 'false' | null
 }
 
 export interface WorkflowCreate {

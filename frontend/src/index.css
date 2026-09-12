@@ -23,34 +23,30 @@
   --color-status-warning: #fab219;
   --color-status-serious: #ec835a;
   --color-status-critical: #d03b3b;
+  /* canvas：畫布比頁面與卡片都深一階，讓它讀起來是凹下去的工作區 */
+  --color-canvas: #f5f4f0;
+  --color-canvas-grid-minor: #e7e6df;
+  --color-canvas-grid-major: #d5d4c9;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --color-surface: #1a1a19;
-    --color-plane: #0d0d0d;
-    --color-ink: #ffffff;
-    --color-ink-secondary: #c3c2b7;
-    --color-ink-muted: #898781;
-    --color-gridline: #2c2c2a;
-    --color-baseline: #383835;
-    --color-border: rgba(255, 255, 255, 0.1);
-    --color-accent: #3987e5;
-    --color-accent-strong: #86b6ef;
-  }
-}
-
+/* 主題改由使用者明確切換（見 src/context/ThemeContext.tsx），index.html 會在
+   第一次繪製前設好 data-theme。這裡刻意不再保留 prefers-color-scheme 分支——
+   只要它還在，系統偏好一變動就又會無預警換色。 */
 :root[data-theme='dark'] {
-  --color-surface: #1a1a19;
-  --color-plane: #0d0d0d;
-  --color-ink: #ffffff;
+  --color-surface: #1c1c1b;
+  --color-plane: #121212;
+  /* 純白在 #121212 上對比過強，稍微壓一點比較不刺眼 */
+  --color-ink: #ebe9e3;
   --color-ink-secondary: #c3c2b7;
   --color-ink-muted: #898781;
-  --color-gridline: #2c2c2a;
-  --color-baseline: #383835;
-  --color-border: rgba(255, 255, 255, 0.1);
+  --color-gridline: #2b2b29;
+  --color-baseline: #3b3b38;
+  --color-border: rgba(255, 255, 255, 0.09);
   --color-accent: #3987e5;
   --color-accent-strong: #86b6ef;
+  --color-canvas: #0d0d0c;
+  --color-canvas-grid-minor: #232321;
+  --color-canvas-grid-major: #2f2f2c;
 }
 
 html,

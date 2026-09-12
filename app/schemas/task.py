@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,3 +35,33 @@ class TaskResultResponse(BaseModel):
     status: str
     result: Optional[Any] = None
     error_message: Optional[str] = None
+
+
+class TaskFieldOption(BaseModel):
+    value: str
+    label: str
+
+
+class TaskFieldSpec(BaseModel):
+    """描述 task_type 底下的一個 payload 欄位，前端拿來動態畫表單用。"""
+    key: str
+    label: str
+    kind: str  # "string" | "number" | "boolean" | "text" | "select" | "multiselect"
+    default: Any = None
+    required: bool = False
+    help: Optional[str] = None
+    options: Optional[List[TaskFieldOption]] = None
+    # kind == "code" 時的語法標記（前端目前認得 "python" / "json"）。
+    # 給不認得的值前端會退回純編輯器，不會壞掉。
+    language: Optional[str] = None
+    # 非 None 代表這個欄位（通常是 "text" kind）除了手動輸入，前端也該提供
+    # 「上傳檔案帶入內容」的按鈕，值是 <input accept> 用的副檔名，例如 ".py"。
+    upload_accept: Optional[str] = None
+
+
+class TaskTypeSpec(BaseModel):
+    """一個 task_type 在前端『New task』表單裡該長什麼樣子。見 GET /tasks/types。"""
+    task_type: str
+    label: str
+    description: str
+    fields: List[TaskFieldSpec]

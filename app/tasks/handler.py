@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import tempfile
 import time
@@ -10,6 +11,8 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 import requests
+
+from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed
 
 #define business logics
 
@@ -74,6 +77,126 @@ def handle_http_request(payload: Dict[str, Any]) -> Dict[str, Any]:
         response_body = response.text[:2000]
 
     return {"status_code": response.status_code, "response_body": response_body}
+
+_PY_RESULT_MARKER = "__COWORKIFY_RESULT__"
+
+# 附加在使用者程式碼後面的驅動程式碼：如果使用者定義了一個叫 main 的函式，
+# 就呼叫它、把回傳值序列化成 JSON 印到一行特殊標記後面。沒有 main 的話這段
+# if 判斷式在執行期就是 False，完全不影響原本的程式（含它自己的 print 輸出）。
+# 這樣使用者不用自己 print(json.dumps(...))，寫一個回傳 True/False（或任何
+# JSON 可序列化值）的 main() 就好，結果會出現在 task 結果的 "value" 欄位。
+_PY_DRIVER = f"""
+
+if 'main' in dir() and callable(main):
+    import json as __coworkify_json
+    __coworkify_result = main()
+    try:
+        __coworkify_serialized = __coworkify_json.dumps(__coworkify_result)
+    except (TypeError, ValueError):
+        __coworkify_serialized = __coworkify_json.dumps(str(__coworkify_result))
+    print({_PY_RESULT_MARKER!r} + __coworkify_serialized)
+"""
+
+
+def handle_python(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    在受限 subprocess 裡跑一段 python 程式碼，見 app/tasks/sandbox.py 的說明。
+
+    如果程式碼定義了 main()，它的回傳值會被自動抓出來放進結果的 "value" 欄位
+    （JSON 序列化過，所以下游可以用 '{{steps.<key>.result.value}}' 拿到真正
+    型別的值，不用自己 print() 再從 stdout 字串裡解析）。
+    """
+    code = payload.get("code")
+    if not code:
+        raise ValueError("payload.code is required for python task")
+
+    result = run_sandboxed(
+        lambda tmpdir: python_command(code + _PY_DRIVER, tmpdir),
+        shell=False,
+        timeout_seconds=payload.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+    )
+
+    value = None
+    clean_lines = []
+    for line in result["stdout"].splitlines():
+        if line.startswith(_PY_RESULT_MARKER):
+            try:
+                value = json.loads(line[len(_PY_RESULT_MARKER):])
+            except ValueError:
+                pass
+        else:
+            clean_lines.append(line)
+    result["stdout"] = "\n".join(clean_lines)
+    result["value"] = value
+    return result
+
+
+def handle_shell(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """在受限 subprocess 裡跑一段 shell 指令，見 app/tasks/sandbox.py 的說明。"""
+    command = payload.get("command")
+    if not command:
+        raise ValueError("payload.command is required for shell task")
+
+    return run_sandboxed(
+        command,
+        shell=True,
+        timeout_seconds=payload.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+    )
+
+
+_CONDITION_OPERATORS = {
+    "eq": lambda l, r: l == r,
+    "ne": lambda l, r: l != r,
+    "gt": lambda l, r: l > r,
+    "gte": lambda l, r: l >= r,
+    "lt": lambda l, r: l < r,
+    "lte": lambda l, r: l <= r,
+    "contains": lambda l, r: r in l,
+    "not_contains": lambda l, r: r not in l,
+    "is_true": lambda l, r: l is True,
+    "is_false": lambda l, r: l is False,
+    "is_empty": lambda l, r: not l,
+    "is_not_empty": lambda l, r: bool(l),
+}
+
+
+def handle_condition(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    分支節點：依 operator 比較 left/right。這個 task 永遠成功，回傳
+    {"passed": bool, ...}——條件不成立不代表「這個 task 失敗」，真正的 if/else 是
+    下游步驟用 branch_of/branch_when 指向這個 condition 來實現的：見
+    app/tasks/executor.py 的 advance_workflow，選錯邊的分支會被取消，不會讓整條
+    workflow 變成 FAILED。
+
+    left 在 workflow 裡通常不用自己填：只要這個 condition 剛好只依賴一個上游 step，
+    executor 會在派送前自動帶入該 step 的結果（見 resolve_condition_left）。
+    """
+    operator = payload.get("operator")
+    if operator not in _CONDITION_OPERATORS:
+        raise ValueError(
+            f"Unknown operator '{operator}' for condition task. "
+            f"Available: {sorted(_CONDITION_OPERATORS)}"
+        )
+
+    # 沒有 left 就直接報錯，不要拿 None 去比較——那會悄悄得到 passed=False，
+    # 讓 workflow 走錯分支而且完全看不出哪裡設錯了。
+    if "left" not in payload or payload["left"] == "":
+        raise ValueError(
+            "payload.left is required for condition task. 在 workflow 裡可以留空由系統"
+            "自動帶入上游結果，但前提是這個 condition 剛好只依賴一個上游 step——"
+            "目前不是這種情況（沒有上游、或上游超過一個），請明確指定 left，"
+            "例如 '{{steps.<key>.result.value}}'。"
+        )
+
+    left = payload.get("left")
+    right = payload.get("right")
+    try:
+        passed = _CONDITION_OPERATORS[operator](left, right)
+    except TypeError as exc:
+        raise ValueError(f"Can't evaluate {left!r} {operator} {right!r}: {exc}") from exc
+
+    return {"passed": bool(passed), "left": left, "operator": operator, "right": right}
+
 
 # 4. 模擬搜尋職缺，回傳一份 list（示範 for_each 動態展開用）
 def handle_job_search(payload: Dict[str, Any]) -> list:
@@ -184,6 +307,9 @@ TASK_REGISTRY = {
     "tailor_cv": handle_tailor_cv,
     "job_apply": handle_job_apply,
     "agent_step": handle_agent_step,
+    "python": handle_python,
+    "shell": handle_shell,
+    "condition": handle_condition,
 }
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數

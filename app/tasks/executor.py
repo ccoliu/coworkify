@@ -39,6 +39,11 @@ def execute_task(self, task_id: str):
         if not task:
             return f"Task {task_uuid} not found"
 
+        # 軟刪除：row 還在，但已經被使用者刪掉了——這條路徑主要防的是
+        # scheduled_at 排定了未來執行、在 eta 到之前被刪掉的 task。
+        if task.deleted_at is not None:
+            return f"Task {task_uuid} was deleted"
+
         if task.status == TaskStatus.RUNNING or task.status == TaskStatus.SUCCESS or task.status == TaskStatus.FAILED:
             return f"Task {task_uuid} is already {task.status}"
 
@@ -140,7 +145,66 @@ def dispatch_task(task: Task):
     execute_task.apply_async(
         args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type)
     )
-        
+
+
+def _cascade_cancel(db, all_steps: list[WorkflowStep], from_task_ids, reason: str) -> set:
+    """
+    從 from_task_ids 開始，往下游走訪 depends_on 圖，把還是 PENDING 的 task
+    標成 CANCELLED（不包含 from_task_ids 自己——呼叫端如果連它們自己也要取消，
+    要自己先處理）。FAILED 的下游取消、branch 選錯邊的下游取消都靠這個。
+    """
+    to_cancel_ids = set()
+    frontier = list(from_task_ids)
+    while frontier:
+        current = frontier.pop()
+        for s in all_steps:
+            if str(current) in s.depends_on and s.task_id not in to_cancel_ids:
+                to_cancel_ids.add(s.task_id)
+                frontier.append(s.task_id)
+
+    for tid in to_cancel_ids:
+        t = db.get(Task, tid)
+        if t and t.status == TaskStatus.PENDING:
+            t.status = TaskStatus.CANCELLED
+            notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
+
+    return to_cancel_ids
+
+
+def resolve_condition_left(db, step: WorkflowStep, payload: dict) -> dict:
+    """
+    condition 沒填 left 時，自動帶入「唯一上游 step 的結果」當左運算元。
+
+    在 DAG 裡 condition 通常就是拿來判斷前一步的產出，逼使用者手寫
+    '{{steps.<key>.result...}}' 指回唯一的上游是多餘的。上游有多個（或一個都沒有）
+    時無法推斷，就原樣放行，交給 handler 丟出清楚的錯誤。
+
+    上游是有定義 main() 的 python task 時取 result.value（使用者真正關心的回傳值），
+    其餘情況取整包 result。
+    """
+    if payload.get("left") not in (None, ""):
+        return payload
+    if len(step.depends_on) != 1:
+        return payload
+
+    result = collect_step_results(db, list(step.depends_on))[0]
+    if isinstance(result, dict) and result.get("value") is not None:
+        result = result["value"]
+    return {**payload, "left": result}
+
+
+def _condition_result(db, task_id) -> bool | None:
+    """condition task 最新一筆成功結果的 passed 欄位；不是 condition 或還沒有結果就回 None。"""
+    log = db.scalars(
+        select(TaskLog)
+        .where(TaskLog.task_id == task_id, TaskLog.status == TaskStatus.SUCCESS)
+        .order_by(TaskLog.created_at.desc())
+    ).first()
+    if not log or not isinstance(log.result, dict) or "passed" not in log.result:
+        return None
+    return bool(log.result["passed"])
+
+
 def advance_workflow(db, task: Task):
     """task 成功/失敗後，更新 workflow 狀態並派送後續節點"""
     steps = db.scalars(select(WorkflowStep).where(WorkflowStep.task_id == task.id)).first()
@@ -155,6 +219,27 @@ def advance_workflow(db, task: Task):
         expand_dynamic_steps(db, workflow, task)
 
         all_steps = db.scalars(select(WorkflowStep).where(WorkflowStep.workflow_id == workflow.id)).all()
+
+        # 分支：如果剛完成的 task 是某個 condition 步驟，把選錯邊的那一支分支
+        # （連同它自己的下游）取消掉；符合的那一支不用特殊處理，走下面一般的
+        # depends_on 派送邏輯就會正常跑。
+        if steps.step_key:
+            branch_result = _condition_result(db, task.id)
+            if branch_result is not None:
+                taken = "true" if branch_result else "false"
+                losing_steps = [
+                    s for s in all_steps
+                    if s.branch_of_key == steps.step_key and s.branch_when != taken
+                ]
+                if losing_steps:
+                    reason = f"條件分支未命中（結果是 {taken}），已取消"
+                    for s in losing_steps:
+                        t = db.get(Task, s.task_id)
+                        if t and t.status == TaskStatus.PENDING:
+                            t.status = TaskStatus.CANCELLED
+                            notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
+                    _cascade_cancel(db, all_steps, [s.task_id for s in losing_steps], reason)
+                    db.commit()
 
         # 找出依賴這個 task、並且依賴已全部滿的下游step，派送出去
         for s in all_steps:
@@ -176,35 +261,37 @@ def advance_workflow(db, task: Task):
                             next_task.payload, collect_results_by_key(db, workflow.id)
                         )
                         db.commit()
+
+                    if next_task.task_type == "condition":
+                        # 沒填 left 的 condition：自動帶入唯一上游的結果。
+                        # 放在 render_step_refs 之後，所以有寫 template 的會先被解析、
+                        # left 就不是空的，這裡自然不會覆蓋它。
+                        resolved = resolve_condition_left(db, s, next_task.payload)
+                        if resolved is not next_task.payload:
+                            next_task.payload = resolved
+                            db.commit()
+
                     dispatch_task(next_task)
     
-        # 檢查是否所有 task 都完成了
+        # 檢查是否所有 task 都完成了。CANCELLED 也算完成——這是分支沒命中時
+        # 正常、預期的結果，不代表 workflow 失敗。
         all_tasks = db.scalars(select(Task).where(Task.id.in_([s.task_id for s in all_steps]))).all()
-        if all(t.status == TaskStatus.SUCCESS for t in all_tasks):
+        if all(t.status in (TaskStatus.SUCCESS, TaskStatus.CANCELLED) for t in all_tasks):
             workflow.status = WorkFlowStatus.SUCCESS
             db.commit()
 
     elif task.status == TaskStatus.FAILED:
         # 這個 task 失敗了：把所有下游(直接+間接依賴它的)step 取消掉，整條 workflow 標記失敗
         all_steps = db.scalars(select(WorkflowStep).where(WorkflowStep.workflow_id == workflow.id)).all()
-        to_cancel_ids = set()
-        frontier = [task.id]
-        while frontier:
-            current = frontier.pop()
-            for s in all_steps:
-                if str(current) in s.depends_on and s.task_id not in to_cancel_ids:
-                    to_cancel_ids.add(s.task_id)
-                    frontier.append(s.task_id)
+        reason = "上游任務失敗，已取消"
+        _cascade_cancel(db, all_steps, [task.id], reason)
 
         for s in all_steps:
             if s.reduce_of_key and not s.depends_on:
-                to_cancel_ids.add(s.task_id)
-            
-        for tid in to_cancel_ids:
-            t = db.get(Task, tid)
-            if t and t.status == TaskStatus.PENDING:
-                t.status = TaskStatus.CANCELLED
-                notify_status_change(str(t.id), TaskStatus.CANCELLED, None, "上游任務失敗，已取消")
+                t = db.get(Task, s.task_id)
+                if t and t.status == TaskStatus.PENDING:
+                    t.status = TaskStatus.CANCELLED
+                    notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
 
         workflow.status = WorkFlowStatus.FAILED
         db.commit()
@@ -242,6 +329,8 @@ def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
             depends_on=[str(key_to_task[dep].id) for dep in step.get("depends_on", [])],
             reduce_of_key=step.get("reduce_of"),
             step_key=step["key"],
+            branch_of_key=step.get("branch_of"),
+            branch_when=step.get("branch_when"),
         )
         db.add(ws)
         ws_list.append(ws)

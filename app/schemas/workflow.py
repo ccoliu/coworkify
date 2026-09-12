@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 import json 
@@ -29,6 +29,18 @@ class WorkflowStepCreate(BaseModel):
     )
 
     reduce_of: str | None = Field(None, description="指向某個 for_each step 的 key。若設定，會將所有 for_each task 的結果合併成一個 list，並取代 for_each 本身建立一個新的 task（這是一個 reduce 操作）。")
+
+    branch_of: Optional[str] = Field(
+        None,
+        description=(
+            "指向某個 condition step 的 key。若設定，這個 step 只有在該 condition 的"
+            "結果符合 branch_when 時才會執行，否則會被取消（連同它自己的下游）——"
+            "用來實現 if/else 分支。必須同時把 branch_of 指向的 step 加進 depends_on。"
+        ),
+    )
+    branch_when: Optional[Literal["true", "false"]] = Field(
+        None, description="搭配 branch_of 使用：這個分支要在 condition 結果是 true 還是 false 時執行。"
+    )
 
 
 class WorkflowCreate(BaseModel):
@@ -76,6 +88,27 @@ class WorkflowCreate(BaseModel):
 
             if step.for_each and step.reduce_of:
                 raise ValueError(f"Step '{step.key}' 不能同時 for_each 和 reduce_of")
+
+            if step.branch_of or step.branch_when:
+                if not step.branch_of or not step.branch_when:
+                    raise ValueError(f"Step '{step.key}' 的 branch_of 和 branch_when 要一起設定")
+                if step.for_each or step.reduce_of:
+                    raise ValueError(
+                        f"Step '{step.key}' 不能同時是 branch 步驟又是 for_each/reduce_of 步驟（這輪不支援）"
+                    )
+                if step.branch_of not in key_set:
+                    raise ValueError(f"Step '{step.key}' 的 branch_of 指向不存在的 step '{step.branch_of}'")
+                if step.branch_of == step.key:
+                    raise ValueError(f"Step '{step.key}' 不能 branch 自己")
+                if by_key[step.branch_of].task_type != "condition":
+                    raise ValueError(
+                        f"Step '{step.key}' 的 branch_of 目標 '{step.branch_of}' 不是 condition 步驟"
+                    )
+                if step.branch_of not in step.depends_on:
+                    raise ValueError(
+                        f"Step '{step.key}' 用 branch_of='{step.branch_of}' 做分支，"
+                        f"必須把 '{step.branch_of}' 也加進 depends_on，確保執行順序"
+                    )
 
             if step.reduce_of:
                 if step.reduce_of not in key_set:
@@ -143,6 +176,12 @@ class WorkflowStepResponse(BaseModel):
     id: UUID
     task_id: UUID
     depends_on: List[UUID]
+    branch_of_key: Optional[str] = None
+    branch_when: Optional[str] = None
+    # 前端畫布要靠 step_key 把 branch_of_key（存的是 key 不是 task id）解析成節點 id；
+    # reduce_of_key 讓 reduce 步驟在圖上標示出來。
+    step_key: Optional[str] = None
+    reduce_of_key: Optional[str] = None
     task_status: Optional[str] = None
     task_name: Optional[str] = None
     task_type: Optional[str] = None

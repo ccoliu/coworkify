@@ -11,6 +11,7 @@ import { TaskDetail } from './pages/TaskDetail'
 import { WorkflowDetail } from './pages/WorkflowDetail'
 import { Workflows } from './pages/Workflows'
 import { Schedules } from './pages/Schedules'
+import { WorkflowBuilder } from './pages/WorkflowBuilder'
 
 function ProtectedArea() {
   const { user, isReady } = useAuth()
@@ -39,6 +40,7 @@ export function App() {
         <Route path="/ops" element={<Ops />} />
         <Route path="/workflows" element={<Workflows />} />
         <Route path="/workflows/:id" element={<WorkflowDetail />} />
+        <Route path="/workflows/new" element={<WorkflowBuilder />} />
         <Route path="/schedules" element={<Schedules />} />
       </Route>
       <Route path="*" element={<NotFound />} />

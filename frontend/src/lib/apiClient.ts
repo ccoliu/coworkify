@@ -5,6 +5,7 @@ import type {
   Task,
   TaskCreate,
   TaskListFilters,
+  TaskTypeSpec,
   User,
   Workflow,
   WorkflowCreate,
@@ -90,6 +91,10 @@ export function getTask(id: string): Promise<Task> {
   return request(`/tasks/${id}`)
 }
 
+export function listTaskTypes(): Promise<TaskTypeSpec[]> {
+  return request('/tasks/types')
+}
+
 export function createTask(task: TaskCreate): Promise<Task> {
   return request('/tasks/', { method: 'POST', body: JSON.stringify(task) })
 }
@@ -136,4 +141,8 @@ export function updateSchedule(id: string, patch: WorkflowScheduleUpdate): Promi
 
 export function deleteSchedule(id: string): Promise<void> {
   return request(`/schedules/${id}`, { method: 'DELETE' })
+}
+
+export function deleteWorkflow(id: string): Promise<void> {
+  return request(`/workflows/${id}`, { method: 'DELETE' })
 }

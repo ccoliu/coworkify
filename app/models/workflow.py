@@ -46,6 +46,13 @@ class WorkflowStep(Base):
     # 非 None 代表這是 reduce 步驟，值為它要收斂的 for_each step key。
     # 建立時 depends_on 是空的，等那組模板展開後才被填成所有展開出來的 task id。
     reduce_of_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    # 非 None 代表這個 step 是條件分支的其中一邊：branch_of_key 是那個 condition
+    # step 的 key，branch_when 是 "true"/"false"。condition 執行完後，
+    # advance_workflow 會比對它的 {"passed": bool} 結果跟 branch_when 是否相符——
+    # 不符的那一邊（連同它自己的下游）直接被取消，符合的那一邊照一般 depends_on
+    # 邏輯往下派送。這樣 condition 本身永遠是 SUCCESS，不用靠「失敗」硬做分支。
+    branch_of_key: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    branch_when: Mapped[str | None] = mapped_column(String(10), nullable=True, default=None)
     # 建立時的本地識別碼，讓下游可以用 '{{steps.<key>.result}}' 參照這一步的結果。
     # 只有 concrete step 有；for_each 展開出來的 task 共用同一個模板 key，
     # 會造成參照歧義，所以一律留 None。
