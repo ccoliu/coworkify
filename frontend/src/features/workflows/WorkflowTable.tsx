@@ -5,7 +5,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { StatusBadge } from '../../components/StatusBadge'
 import { Button } from '../../components/Button'
 
-export function WorkflowTable({ workflows, onDelete }: { workflows: Workflow[]; onDelete: (id: string) => void }) {
+export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { workflows: Workflow[]; onRerun: (id: string) => void; onDelete: (id: string) => void; isRerunning: boolean }) {
     if (workflows.length === 0) {
         return (
             <EmptyState
@@ -46,6 +46,13 @@ export function WorkflowTable({ workflows, onDelete }: { workflows: Workflow[]; 
                                 </td>
                                 <td className="px-4 py-3 text-ink-muted">{formatRelativeTime(wf.updated_at)}</td>
                                 <td className="px-4 py-3 text-right">
+                                    <Button
+                                        variant='secondary'
+                                        onClick={() => onRerun(wf.id)}
+                                        disabled={isRerunning}
+                                    >
+                                        {isRerunning ? 'Running…' : 'Rerun'}
+                                    </Button>
                                     <Button
                                         variant="danger"
                                         onClick={() => {

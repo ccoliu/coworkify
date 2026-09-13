@@ -1,4 +1,4 @@
-import dagre, { Graph } from "@dagrejs/dagre";
+import dagre from "@dagrejs/dagre";
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import { shortId } from "../../lib/format";
 import type { TaskStatus, WorkflowStep } from "../../lib/types";
@@ -16,6 +16,8 @@ export type StepNodeData = {
     branchWhen: 'true' | 'false' | null
     isReduce: boolean
     selected: boolean
+    /** builder 的驗證訊息；run view 一律空陣列 */
+    issues: string[]
 }
 
 export type StepNode = Node<StepNodeData, 'task' | 'condition'>
@@ -121,6 +123,7 @@ export function toFlow(steps: GraphStep[]): { nodes: StepNode[]; edges: Edge[] }
             branchWhen: step.branchWhen,
             isReduce: step.isReduce,
             selected: false,
+            issues: []
         },
     }))
 

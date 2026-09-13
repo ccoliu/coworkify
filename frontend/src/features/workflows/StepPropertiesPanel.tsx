@@ -7,11 +7,12 @@ import type { StepDraft } from './WorkflowStepsEditor'
 interface Props {
     step: StepDraft
     steps: StepDraft[]
+    issues: string[]
     onUpdate: (uid: string, patch: Partial<StepDraft>) => void
     onRemove: (uid: string) => void
 }
 
-export function StepPropertiesPanel({ step, steps, onUpdate, onRemove }: Props) {
+export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }: Props) {
     const { data: taskTypes } = useTaskTypeCatalog()
     const spec = taskTypes?.find((t) => t.task_type === step.taskType)
 
@@ -30,6 +31,28 @@ export function StepPropertiesPanel({ step, steps, onUpdate, onRemove }: Props) 
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3">
+                {issues.length > 0 && (
+                    <ul className="rounded-lg border border-status-critical/40 bg-status-critical/5 px-3 py-2 text-xs text-status-critical">
+                        {issues.map((issue) => (
+                            <li key={issue}>• {issue}</li>
+                        ))}
+                    </ul>
+                )}
+
+                <div>
+                    <Label htmlFor="step-key">Step key</Label>
+                    <Input
+                        id="step-key"
+                        value={step.key}
+                        onChange={(e) => onUpdate(step.uid, { key: e.target.value })}
+                    />
+                    <p className="mt-1 text-xs text-ink-muted">
+                        下游 payload 用{' '}
+                        <code className="font-mono">{`{{steps.${step.key}.result}}`}</code>{' '}
+                        參照這一步的結果（只能用英數字與底線）。
+                    </p>
+                </div>
+
                 <div>
                     <Label htmlFor="step-name">Name</Label>
                     <Input

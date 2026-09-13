@@ -1,6 +1,6 @@
 import { useTaskTypeCatalog } from "../../lib/taskTypeCatalog";
 import { Spinner } from "../../components/Spinner";
-import { PythonIcon, WebIcon, BashIcon, SplitIcon, RobotIcon } from "../../components/Icon";
+import { PythonIcon, WebIcon, BashIcon, SplitIcon, RobotIcon, BiImportIcon } from "../../components/Icon";
 
 export const TASK_TYPE_DRAG_MIME = 'application/coworkify-task-type'
 
@@ -32,6 +32,7 @@ export function TaskTypePalette({ onAdd }: { onAdd: (taskType: string) => void }
                     title={t.description}
                 >
                     <div className="flex items-center gap-2">
+                        {t.task_type === 'input' && <BiImportIcon />}
                         {t.task_type === 'python' && <PythonIcon />}
                         {t.task_type === 'http_request' && <WebIcon />}
                         {t.task_type === 'shell' && <BashIcon />}

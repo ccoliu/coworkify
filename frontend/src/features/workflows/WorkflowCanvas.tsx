@@ -2,8 +2,6 @@ import '@xyflow/react/dist/style.css'
 import { useTheme } from '../../context/ThemeContext'
 
 import {
-    Background,
-    BackgroundVariant,
     Controls,
     MiniMap,
     ReactFlow,
@@ -34,7 +32,7 @@ interface Props {
 
 export function WorkflowCanvas({ steps, selectedTaskId, onSelect }: Props) {
     const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([])
-    const [edges, setEdges, onEdgesChange] = useEdgesState([])
+    const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
     const { theme } = useTheme()
 
     // steps 每次 refetch 都是新物件，所以這裡會重算——但 dagre 對同一組 DAG 是

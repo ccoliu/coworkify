@@ -4,9 +4,13 @@ import { Button } from '../../components/Button'
 import { Input, Label, Select } from '../../components/Field'
 import { Spinner } from '../../components/Spinner'
 import { TaskPayloadFields } from '../tasks/TaskPayloadFields'
+import type { WorkflowStepCreate } from '../../lib/types'
 
 export interface StepDraft {
     uid: string
+    /** 送給後端的 step key，也是 payload 裡 '{{steps.<key>.result}}' 要寫的名字。
+     *  只能是英數字與底線——後端的參照 regex 不吃連字號。 */
+    key: string
     name: string
     taskType: string
     payload: Record<string, unknown>
@@ -21,6 +25,7 @@ export interface StepDraft {
 export function makeStep(dependsOn: string[] = []): StepDraft {
     return {
         uid: crypto.randomUUID(),
+        key: '',
         // 這裡先留空，等 WorkflowStepsEditor 拿到 task-type 目錄後用第一個類型回填——
         // makeStep 是給 useState 初始化用的純函式，沒辦法在這裡呼叫 hook 抓目錄。
         name: '',
@@ -262,4 +267,39 @@ export function WorkflowStepsEditor({
             </Button>
         </div>
     )
+}
+
+/** 在既有的 key 之中挑一個沒被用過的 `<base>_<n>`。 */
+export function uniqueStepKey(base: string, taken: Set<string>): string {
+    const safe = base.replace(/[^a-zA-Z0-9_]+/g, '_') || 'step'
+    let i = 1
+    while (taken.has(`${safe}_${i}`)) i += 1
+    return `${safe}_${i}`
+}
+
+/**
+ * 送出用：畫布內部一律用 uid 互相參照，後端只認 step key，這裡做最後轉換。
+ * 不能直接送 uid——uid 是 UUID，帶連字號，後端的 '{{steps.<key>.result}}'
+ * regex（app/schemas/workflow.py 的 _STEP_REF）比對不到。
+ */
+export function toStepCreates(steps: StepDraft[]): WorkflowStepCreate[] {
+    const keyByUid = new Map(steps.map((s) => [s.uid, s.key]))
+    const toKeys = (uids: string[]) =>
+        uids.flatMap((uid) => {
+            const key = keyByUid.get(uid)
+            return key ? [key] : []
+        })
+
+    return steps.map((s) => ({
+        key: s.key,
+        name: s.name,
+        task_type: s.taskType,
+        payload: s.payload,
+        priority: s.priority,
+        max_retries: s.maxRetries,
+        depends_on: toKeys(effectiveDependsOn(s)),
+        for_each: s.forEachUid ? keyByUid.get(s.forEachUid) : undefined,
+        branch_of: s.branchOfUid ? keyByUid.get(s.branchOfUid) : undefined,
+        branch_when: s.branchWhen ?? undefined,
+    }));
 }

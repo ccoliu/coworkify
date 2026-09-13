@@ -13,8 +13,13 @@ export function useStepsEditor(initial: () => StepDraft[]) {
     }
 
     /** 畫布用：不自動接到前一個 step，回傳新 uid 讓呼叫端可以定位 / 選取它。 */
-    function addStepOfType(taskType: string, payload: Record<string, unknown>, name: string): string {
-        const step: StepDraft = { ...makeStep(), taskType, payload, name }
+    function addStepOfType(
+        taskType: string,
+        payload: Record<string, unknown>,
+        name: string,
+        key: string,
+    ): string {
+        const step: StepDraft = { ...makeStep(), taskType, payload, name, key }
         setSteps((prev) => [...prev, step])
         return step.uid
     }

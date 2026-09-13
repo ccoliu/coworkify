@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { StatusBadge } from '../../components/StatusBadge'
 import type { TaskStatus } from '../../lib/types'
 import { NODE_WIDTH, type StepNode, type StepNodeData } from './graphModel'
+import { PythonIcon, BashIcon, WebIcon, SplitIcon, RobotIcon, BiImportIcon } from '../../components/Icon'
 
 const STATUS_BORDER: Record<TaskStatus, string> = {
     pending: 'border-border',
@@ -25,7 +26,8 @@ const HANDLE_STYLE = {
 function shellClass(data: StepNodeData) {
     return clsx(
         'rounded-lg border bg-surface px-3 py-2.5 shadow-sm transition-shadow',
-        STATUS_BORDER[data.status ?? 'pending'],
+        // 驗證問題優先於執行狀態：還沒送出的圖，狀態一律是 pending，沒什麼好顯示的
+        data.issues.length > 0 ? 'border-status-critical' : STATUS_BORDER[data.status ?? 'pending'],
         data.selected && 'ring-2 ring-accent',
     )
 }
@@ -43,6 +45,14 @@ function NodeHeader({ data }: { data: StepNodeData }) {
                         reduce
                     </span>
                 )}
+                {data.issues.length > 0 && (
+                    <span
+                        title={data.issues.join('\n')}
+                        className="ml-auto shrink-0 rounded-full bg-status-critical px-1.5 text-[10px] font-bold text-white"
+                    >
+                        {data.issues.length}
+                    </span>
+                )}
             </div>
             <div className="mt-1 flex items-center justify-between gap-2">
                 <span className="truncate font-mono text-xs text-ink-muted">{data.taskType}</span>
@@ -55,7 +65,17 @@ function NodeHeader({ data }: { data: StepNodeData }) {
 export function TaskNode({ data }: NodeProps<StepNode>) {
     return (
         <div style={{ width: NODE_WIDTH }} className={shellClass(data)}>
-            <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
+            <div className="flex items-center gap-1.5">
+                {data.taskType === 'input' && <BiImportIcon />}
+                {data.taskType === 'python' && <PythonIcon />}
+                {data.taskType === 'http_request' && <WebIcon />}
+                {data.taskType === 'shell' && <BashIcon />}
+                {data.taskType === 'agent_step' && <RobotIcon />}
+            </div>
+            {/* input 是 workflow 的資料入口，沒有上游，不畫接點 */}
+            {data.taskType !== 'input' && (
+                <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
+            )}
             <NodeHeader data={data} />
             <Handle type="source" position={Position.Right} style={HANDLE_STYLE} />
         </div>
@@ -90,6 +110,9 @@ function BranchOutput({ when }: { when: 'true' | 'false' }) {
 export function ConditionNode({ data, isConnectable }: NodeProps<StepNode>) {
     return (
         <div style={{ width: NODE_WIDTH }} className={shellClass(data)}>
+            <div className="flex items-center gap-1.5">
+                {data.taskType === 'condition' && <SplitIcon />}
+            </div>
             <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
             <NodeHeader data={data} />
             <div className="mt-2 border-t border-border pt-1">

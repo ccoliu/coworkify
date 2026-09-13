@@ -1,7 +1,5 @@
 import '@xyflow/react/dist/style.css'
 import {
-    Background,
-    BackgroundVariant,
     Controls,
     MiniMap,
     Panel,
@@ -14,49 +12,60 @@ import {
     type Edge,
     type XYPosition,
 } from '@xyflow/react'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '../../components/Button'
+import { useTheme } from '../../context/ThemeContext'
+import { CanvasBackground } from './CanvasBackground'
 import { autoLayout, stepsFromDrafts, toFlow, wouldCreateCycle, type StepNode } from './graphModel'
 import { TASK_TYPE_DRAG_MIME } from './TaskTypePalette'
 import { workflowNodeTypes } from './WorkflowNodes'
 import type { StepDraft } from './WorkflowStepsEditor'
-import { useTheme } from '../../context/ThemeContext'
-import { CanvasBackground } from './CanvasBackground'
-
 
 interface Props {
     steps: StepDraft[]
     selectedUid: string | null
+    issues: Map<string, string[]>
     onSelect: (uid: string | null) => void
     /** 回傳新 step 的 uid，畫布用它把節點放在游標位置 */
     onAddStep: (taskType: string) => string
+    /** 回傳複製出來的新 step uid，畫布負責把它放在原節點旁邊 */
+    onDuplicateStep: (uid: string) => string | null
     onRemoveStep: (uid: string) => void
     onConnectSteps: (source: string, target: string, branchWhen: 'true' | 'false' | null) => void
     onDisconnectSteps: (source: string, target: string) => void
     onInvalid: (message: string) => void
 }
 
+/** 使用者正在打字時不該觸發畫布快捷鍵。CodeMirror 的編輯區不是 textarea，要另外判斷。 */
+function isTypingTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null
+    if (!el || typeof el.closest !== 'function') return false
+    if (el.isContentEditable) return true
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return true
+    return el.closest('.cm-editor') != null
+}
 
 function BuilderCanvas({
     steps,
     selectedUid,
+    issues,
     onSelect,
     onAddStep,
+    onDuplicateStep,
     onRemoveStep,
     onConnectSteps,
     onDisconnectSteps,
     onInvalid,
 }: Props) {
     const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([])
-    const [edges, setEdges, onEdgesChange] = useEdgesState([])
+    const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+    // 選取狀態完全由我們自己管：同步 effect 每次都會重建 nodes / edges，
+    // React Flow 內建的 selected 旗標會被洗掉，靠它做刪除並不可靠。
+    const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
     const { screenToFlowPosition, fitView } = useReactFlow()
-    // 新加的 step 要放的位置。addStepOfType 是同步回傳 uid 的，所以可以先記起來，
-    // 等下面的同步 effect 建節點時取用。
     const pendingPositions = useRef(new Map<string, XYPosition>())
     const { theme } = useTheme()
 
-    // steps 是唯一真相，節點 / 邊每次都從它重建；只有座標沿用畫布上現有的，
-    // 這樣使用者拖過的位置不會在每次編輯後被打回原形。
     useEffect(() => {
         const graph = toFlow(stepsFromDrafts(steps))
         setNodes((prev) => {
@@ -67,20 +76,41 @@ function BuilderCanvas({
                 return {
                     ...n,
                     position: prevById.get(n.id)?.position ?? pending ?? { x: 40 + i * 40, y: 40 + i * 40 },
-                    data: { ...n.data, selected: n.id === selectedUid },
+                    data: { ...n.data, selected: n.id === selectedUid, issues: issues.get(n.id) ?? [] },
                 }
             })
         })
-        setEdges(graph.edges)
-    }, [steps, selectedUid, setNodes, setEdges])
+        setEdges(
+            graph.edges.map((e) =>
+                e.id === selectedEdgeId
+                    ? {
+                        ...e,
+                        style: { ...e.style, stroke: 'var(--color-accent)', strokeWidth: 2.5 },
+                        markerEnd:
+                            typeof e.markerEnd === 'object' && e.markerEnd !== null
+                                ? { ...e.markerEnd, color: 'var(--color-accent)' }
+                                : e.markerEnd,
+                    }
+                    : e,
+            ),
+        )
+    }, [steps, selectedUid, selectedEdgeId, issues, setNodes, setEdges])
+
+    const selectNode = useCallback(
+        (uid: string | null) => {
+            setSelectedEdgeId(null)
+            onSelect(uid)
+        },
+        [onSelect],
+    )
 
     const addAt = useCallback(
         (taskType: string, position: XYPosition) => {
             const uid = onAddStep(taskType)
             pendingPositions.current.set(uid, position)
-            onSelect(uid)
+            selectNode(uid)
         },
-        [onAddStep, onSelect],
+        [onAddStep, selectNode],
     )
 
     const onDrop = useCallback(
@@ -93,17 +123,92 @@ function BuilderCanvas({
         [addAt, screenToFlowPosition],
     )
 
+    const removeEdge = useCallback(
+        (edgeId: string) => {
+            const edge = edges.find((e) => e.id === edgeId)
+            if (!edge) return
+            if (edge.data?.kind !== 'depends') {
+                onInvalid('for_each / reduce 的關聯要在右側屬性面板調整，不能直接刪線')
+                return
+            }
+            onDisconnectSteps(edge.source, edge.target)
+            setSelectedEdgeId(null)
+        },
+        [edges, onDisconnectSteps, onInvalid],
+    )
+
+    const runAutoLayout = useCallback(() => {
+        setNodes((prev) => autoLayout(prev, edges))
+        // 重排後畫面要跟上，等 state 落地再 fitView
+        window.setTimeout(() => fitView({ padding: 0.18, maxZoom: 1 }), 0)
+    }, [edges, fitView, setNodes])
+
+    const duplicate = useCallback(
+        (uid: string) => {
+            const source = nodes.find((n) => n.id === uid)
+            const newUid = onDuplicateStep(uid)
+            if (!newUid) return
+            if (source) {
+                pendingPositions.current.set(newUid, {
+                    x: source.position.x + 48,
+                    y: source.position.y + 72,
+                })
+            }
+            selectNode(newUid)
+        },
+        [nodes, onDuplicateStep, selectNode],
+    )
+
+    // 快捷鍵。掛在 document 上而不是畫布 div，使用者才不用先點畫布一下才生效；
+    // 正在打字時一律略過。
+    useEffect(() => {
+        function onKeyDown(event: KeyboardEvent) {
+            if (isTypingTarget(event.target)) return
+
+            if (event.key === 'Delete' || event.key === 'Backspace') {
+                if (selectedEdgeId) {
+                    event.preventDefault()
+                    removeEdge(selectedEdgeId)
+                } else if (selectedUid) {
+                    event.preventDefault()
+                    onRemoveStep(selectedUid)
+                }
+                return
+            }
+
+            if (event.key === 'Escape') {
+                setSelectedEdgeId(null)
+                onSelect(null)
+                return
+            }
+
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+                if (!selectedUid) return
+                event.preventDefault() // 蓋掉瀏覽器的「加入書籤」
+                duplicate(selectedUid)
+                return
+            }
+
+            if (event.ctrlKey || event.metaKey || event.altKey) return
+
+            if (event.key.toLowerCase() === 'l') runAutoLayout()
+            else if (event.key.toLowerCase() === 'f') fitView({ padding: 0.18, maxZoom: 1 })
+        }
+
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+    }, [selectedEdgeId, selectedUid, removeEdge, onRemoveStep, onSelect, duplicate, runAutoLayout, fitView])
+
     const isValidConnection = useCallback(
         (c: Connection | Edge) => {
             if (!c.source || !c.target || c.source === c.target) return false
-            const graph = stepsFromDrafts(steps)
             const target = steps.find((s) => s.uid === c.target)
             const source = steps.find((s) => s.uid === c.source)
             if (!target || !source) return false
             // 展開步驟只能依賴同一組的其他展開步驟（跟舊表單同一條規則）
-            if ((target.forEachUid ?? null) != (source.forEachUid ?? null)) return false
+            if ((target.forEachUid ?? null) !== (source.forEachUid ?? null)) return false
             if (target.dependsOnUids.includes(c.source)) return false
-            return !wouldCreateCycle(graph, c.source, c.target)
+            return !wouldCreateCycle(stepsFromDrafts(steps), c.source, c.target)
         },
         [steps],
     )
@@ -115,7 +220,7 @@ function BuilderCanvas({
             const branchWhen = c.sourceHandle === 'true' || c.sourceHandle === 'false' ? c.sourceHandle : null
             onConnectSteps(c.source, c.target, branchWhen)
         },
-        [onConnectSteps]
+        [onConnectSteps],
     )
 
     return (
@@ -130,14 +235,13 @@ function BuilderCanvas({
                 style={{ backgroundColor: 'var(--color-canvas)' }}
                 onConnect={handleConnect}
                 isValidConnection={isValidConnection}
-                onNodeClick={(_, node) => onSelect(node.id)}
-                onPaneClick={() => onSelect(null)}
-                onNodesDelete={(deleted) => deleted.forEach((n) => onRemoveStep(n.id))}
-                onEdgesDelete={(deleted) =>
-                    deleted.forEach((e) => {
-                        if (e.data?.kind === 'depends') onDisconnectSteps(e.source, e.target)
-                    })
-                }
+                onNodeClick={(_, node) => selectNode(node.id)}
+                onEdgeClick={(_, edge) => {
+                    onSelect(null)
+                    setSelectedEdgeId(edge.id)
+                }}
+                onEdgeDoubleClick={(_, edge) => removeEdge(edge.id)}
+                onPaneClick={() => selectNode(null)}
                 onConnectEnd={(_, state) => {
                     if (!state.isValid) onInvalid('這條連線不合法：會造成循環、重複，或跨越 for_each 分組')
                 }}
@@ -145,25 +249,31 @@ function BuilderCanvas({
                 fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
                 minZoom={0.2}
                 maxZoom={1.75}
-                deleteKeyCode={['Backspace', 'Delete']}
+                // 刪除一律走我們自己的快捷鍵處理，避免跟 RF 內部選取狀態打架
+                deleteKeyCode={null}
                 proOptions={{ hideAttribution: false }}
             >
-                <CanvasBackground variant='dots' />
+                <CanvasBackground variant="dots" />
                 <Controls showInteractive={false} />
                 <MiniMap pannable zoomable style={{ backgroundColor: 'var(--color-surface)' }} />
 
                 <Panel position="top-right">
-                    <Button
-                        variant="secondary"
-                        onClick={() => {
-                            setNodes((prev) => autoLayout(prev, edges))
-                            // 重排後畫面要跟上，等 state 落地再 fitView
-                            window.setTimeout(() => fitView({ padding: 0.18, maxZoom: 1 }), 0)
-                        }}
-                    >
+                    <Button variant="secondary" onClick={runAutoLayout}>
                         Auto layout
                     </Button>
                 </Panel>
+
+                {selectedEdgeId && (
+                    <Panel position="top-center">
+                        <button
+                            type="button"
+                            onClick={() => removeEdge(selectedEdgeId)}
+                            className="mt-2 rounded-lg border border-status-critical/40 bg-surface px-3 py-1.5 text-xs font-medium text-status-critical shadow-sm hover:bg-status-critical hover:text-white"
+                        >
+                            ✕ 移除這條連線（Delete）
+                        </button>
+                    </Panel>
+                )}
 
                 {steps.length === 0 && (
                     <Panel position="top-center">
