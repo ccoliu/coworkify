@@ -63,6 +63,13 @@ class WorkflowCreate(BaseModel):
                 if dep == key:
                     raise ValueError(f"Step '{key}' 不能依賴自己")
 
+        input_keys = [s.key for s in self.steps if s.task_type == "input"]
+        if len(input_keys) > 1:
+            raise ValueError(
+                f"一個 workflow 只能有一個 input step（目前有 {len(input_keys)} 個："
+                f"{', '.join(input_keys)}）"
+            )
+
         for step in self.steps:
             refs = _referenced_step_keys(step.payload)
             if refs:
@@ -85,6 +92,23 @@ class WorkflowCreate(BaseModel):
                             f"Step '{step.key}' 的 payload 參照了 '{ref}' 的結果，"
                             f"必須把 '{ref}' 加進 depends_on，否則無法保證它先執行"
                         )
+
+            if step.task_type == "input" and step.depends_on:
+                raise ValueError(
+                    f"Step '{step.key}' 是 input step，它是整條 workflow 的資料入口，不能有上游依賴"
+                )
+
+            # condition 的 left 留空時，executor 只能在「剛好一個上游」的情況自動帶入
+            # 結果（見 app/tasks/executor.py 的 resolve_condition_left）。這裡先擋掉，
+            # 否則錯誤要等 task 重試耗盡才浮出來，下游分支還會被連坐取消。
+            if step.task_type == "condition" and step.payload.get("left") in (None, ""):
+                if len(step.depends_on) != 1:
+                    raise ValueError(
+                        f"Step '{step.key}' 是 condition 且沒填 payload.left，"
+                        f"必須剛好依賴一個上游 step 讓系統自動帶入結果"
+                        f"（目前有 {len(step.depends_on)} 個）。"
+                        f"或明確指定 left，例如 '{_STEP_REF_SYNTAX}'"
+                    )
 
             if step.for_each and step.reduce_of:
                 raise ValueError(f"Step '{step.key}' 不能同時 for_each 和 reduce_of")
@@ -198,3 +222,5 @@ class WorkflowResponse(BaseModel):
     # None for a workflow created before this field existed — the frontend
     # uses this to decide whether "promote to schedule" is even offered.
     steps_template: Optional[List[Dict[str, Any]]] = None
+    # 整條 workflow 成功時收集的終端結果；失敗或執行中是 None
+    result: Optional[Dict[str, Any]] = None

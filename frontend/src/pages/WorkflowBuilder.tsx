@@ -11,8 +11,10 @@ import { useToast } from '../context/ToastContext'
 import { StepPropertiesPanel } from '../features/workflows/StepPropertiesPanel'
 import { TaskTypePalette } from '../features/workflows/TaskTypePalette'
 import { WorkflowBuilderCanvas } from '../features/workflows/WorkflowBuilderCanvas'
-import { effectiveDependsOn } from '../features/workflows/WorkflowStepsEditor'
 import { useStepsEditor } from '../features/workflows/useStepsEditor'
+import { toStepCreates, uniqueStepKey } from '../features/workflows/WorkflowStepsEditor'
+import { issuesByUid, validateGraph } from '../features/workflows/validateGraph'
+import { useMemo } from 'react'
 
 export function WorkflowBuilder() {
     useWideLayout()
@@ -29,13 +31,29 @@ export function WorkflowBuilder() {
 
     const selectedStep = steps.find((s) => s.uid === selectedUid) ?? null
 
+    const issues = useMemo(() => validateGraph(steps), [steps])
+    const issueMap = useMemo(() => issuesByUid(issues), [issues])
+
     const addStep = useCallback(
         (taskType: string) => {
             const spec = taskTypes?.find((t) => t.task_type === taskType)
-            const seq = steps.filter((s) => s.taskType === taskType).length + 1
-            return addStepOfType(taskType, defaultPayloadFor(spec), `${taskType}-${seq}`)
+            const key = uniqueStepKey(taskType, new Set(steps.map((s) => s.key)))
+            return addStepOfType(taskType, defaultPayloadFor(spec), key, key)
         },
         [taskTypes, steps, addStepOfType],
+    )
+
+    const duplicateStep = useCallback(
+        (uid: string): string | null => {
+            const src = steps.find((s) => s.uid === uid)
+            if (!src) return null
+            const key = uniqueStepKey(src.taskType, new Set(steps.map((s) => s.key)))
+            // 只複製設定，連線刻意不複製——複製出來的是孤立節點，由使用者自己接
+            const newUid = addStepOfType(src.taskType, { ...src.payload }, key, key)
+            updateStep(newUid, { priority: src.priority, maxRetries: src.maxRetries })
+            return newUid
+        },
+        [steps, addStepOfType, updateStep],
     )
 
     const mutation = useMutation({
@@ -52,24 +70,10 @@ export function WorkflowBuilder() {
 
     function onSubmit(e: FormEvent) {
         e.preventDefault()
-        mutation.mutate({
-            name,
-            steps: steps.map((s) => ({
-                key: s.uid,
-                name: s.name,
-                task_type: s.taskType,
-                payload: s.payload,
-                priority: s.priority,
-                max_retries: s.maxRetries,
-                depends_on: effectiveDependsOn(s),
-                for_each: s.forEachUid ?? undefined,
-                branch_of: s.branchOfUid ?? undefined,
-                branch_when: s.branchWhen ?? undefined,
-            })),
-        })
+        mutation.mutate({ name, steps: toStepCreates(steps) })
     }
 
-    const canSubmit = name.trim() !== '' && steps.length > 0 && steps.every((s) => s.name.trim() && s.taskType)
+    const canSubmit = name.trim() !== '' && steps.length > 0 && issues.length === 0
 
     return (
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
@@ -97,6 +101,31 @@ export function WorkflowBuilder() {
                 </div>
             </div>
 
+            {issues.length > 0 && (
+                <div className="rounded-lg border border-status-critical/40 bg-status-critical/5 px-4 py-3">
+                    <p className="text-sm font-medium text-status-critical">
+                        {issues.length} 個問題需要修正才能建立
+                    </p>
+                    <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-status-critical">
+                        {issues.map((issue, i) => (
+                            <li key={`${issue.uid}-${i}`}>
+                                <button
+                                    type="button"
+                                    disabled={!issue.uid}
+                                    onClick={() => setSelectedUid(issue.uid)}
+                                    className="text-left hover:underline disabled:cursor-default"
+                                >
+                                    •{' '}
+                                    {issue.uid
+                                        ? `${steps.find((s) => s.uid === issue.uid)?.name || 'step'}：${issue.message}`
+                                        : issue.message}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
             <Card className="overflow-hidden p-0">
                 <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">
                     <div className="shrink-0 overflow-y-auto border-b border-border lg:w-52 lg:border-b-0 lg:border-r">
@@ -109,6 +138,8 @@ export function WorkflowBuilder() {
                             selectedUid={selectedUid}
                             onSelect={setSelectedUid}
                             onAddStep={addStep}
+                            onDuplicateStep={duplicateStep}
+                            issues={issueMap}
                             onRemoveStep={(uid) => {
                                 removeStep(uid)
                                 setSelectedUid((cur) => (cur === uid ? null : cur))
@@ -124,6 +155,7 @@ export function WorkflowBuilder() {
                             <StepPropertiesPanel
                                 step={selectedStep}
                                 steps={steps}
+                                issues={issueMap.get(selectedStep.uid) ?? []}
                                 onUpdate={updateStep}
                                 onRemove={(uid) => {
                                     removeStep(uid)
@@ -132,6 +164,23 @@ export function WorkflowBuilder() {
                             />
                         </div>
                     )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-ink-muted">
+                    {[
+                        ['Delete', '刪除選取的節點或連線'],
+                        ['Esc', '取消選取'],
+                        ['Ctrl+D', '複製節點'],
+                        ['L', '自動排版'],
+                        ['F', '置中'],
+                    ].map(([key, label]) => (
+                        <span key={key} className="flex items-center gap-1.5">
+                            <kbd className="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10px] text-ink-secondary">
+                                {key}
+                            </kbd>
+                            {label}
+                        </span>
+                    ))}
                 </div>
             </Card>
         </form>

@@ -103,6 +103,27 @@ def promote_workflow_to_schedule(
     db.refresh(schedule)
     return schedule
 
+@router.post("/{workflow_id}/rerun", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+def rerun_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
+    """
+    用同一份 step 樣板再跑一次。刻意建立一個「全新的 workflow」而不是重置舊的——
+    舊那次的每個 task 狀態與 task_logs 都完整保留，才查得出兩次跑的差異。
+    """
+    workflow = db.get(Workflow, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if not workflow.steps_template:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This workflow has no stored step template (it was created before this feature existed) "
+            "— recreate it via POST /workflows/ to enable re-running.",
+        )
+    
+    new_workflow = create_workflow_from_steps(db, workflow.name, workflow.steps_template)
+    _attach_task_details(db, new_workflow.steps)
+    return new_workflow
+
+
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
     workflow = db.get(Workflow, workflow_id)

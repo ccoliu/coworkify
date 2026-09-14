@@ -6,7 +6,7 @@ import { Spinner } from '../components/Spinner'
 import { CreateWorkflowModal } from '../features/workflows/CreateWorkflowModal'
 import { WorkflowTable } from '../features/workflows/WorkflowTable'
 import { useToast } from '../context/ToastContext'
-import { deleteWorkflow } from '../lib/apiClient'
+import { deleteWorkflow, rerunWorkflow } from '../lib/apiClient'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 
@@ -20,6 +20,18 @@ export function Workflows() {
 
     const queryClient = useQueryClient()
     const { push } = useToast()
+
+    const rerun = useMutation({
+        mutationFn: rerunWorkflow,
+        onSuccess: (created) => {
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            push('Re-run started', 'success')
+            navigate(`/workflows/${created.id}`)
+        },
+        onError: (err) => {
+            push(err instanceof ApiError ? err.message : 'Failed to re-run workflow', 'error')
+        },
+    })
 
     const remove = useMutation({
         mutationFn: deleteWorkflow,
@@ -79,7 +91,7 @@ export function Workflows() {
                         Failed to load workflows.
                     </div>
                 ) : (
-                    <WorkflowTable workflows={workflows ?? []} onDelete={remove.mutate} />
+                    <WorkflowTable workflows={workflows ?? []} onDelete={remove.mutate} onRerun={rerun.mutate} isRerunning={rerun.isPending} />
                 )}
             </Card>
 

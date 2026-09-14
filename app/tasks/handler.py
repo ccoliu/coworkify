@@ -198,6 +198,7 @@ def handle_condition(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"passed": bool(passed), "left": left, "operator": operator, "right": right}
 
 
+
 # 4. 模擬搜尋職缺，回傳一份 list（示範 for_each 動態展開用）
 def handle_job_search(payload: Dict[str, Any]) -> list:
     keyword = payload.get("keyword", "backend engineer")
@@ -237,6 +238,21 @@ def _agent_step_tool_factories():
         "http_request": HttpRequestTool,
         "run_tests": RunTestsTool,
     }
+
+# 8. workflow 的資料入口：把 payload 裡的 JSON 原樣變成這一步的 result，
+#    下游就能用 '{{steps.<key>.result.欄位}}' 取用。不需要新的模板語法——
+#    它就是一個「結果是常數」的普通 task。
+def handle_input(payload: Dict[str, Any]) -> Any:
+    raw = payload.get("data", "")
+    # 前端的 code 欄位給的是 JSON 字串；透過 API 直接送 dict/list 也接受
+    if isinstance(raw, (dict, list)):
+        return raw
+    if not str(raw).strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"payload.data 不是合法的 JSON: {exc}") from exc
 
 
 def _resolve_agent_step_workspace(explicit: str | None) -> Path:
@@ -310,6 +326,7 @@ TASK_REGISTRY = {
     "python": handle_python,
     "shell": handle_shell,
     "condition": handle_condition,
+    "input": handle_input
 }
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數

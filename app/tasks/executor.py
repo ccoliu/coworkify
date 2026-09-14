@@ -278,6 +278,7 @@ def advance_workflow(db, task: Task):
         all_tasks = db.scalars(select(Task).where(Task.id.in_([s.task_id for s in all_steps]))).all()
         if all(t.status in (TaskStatus.SUCCESS, TaskStatus.CANCELLED) for t in all_tasks):
             workflow.status = WorkFlowStatus.SUCCESS
+            workflow.result = _collect_workflow_output(db, all_steps)
             db.commit()
 
     elif task.status == TaskStatus.FAILED:
@@ -407,6 +408,27 @@ def collect_step_results(db, task_ids: list[str]) -> list:
     ).all()
     latest = {str(log.task_id): log.result for log in logs}
     return [latest.get(tid) for tid in task_ids]
+
+def _collect_workflow_output(db, all_steps) -> dict:
+    """
+    workflow 的成品：所有終端 step（沒有其他 step 依賴它）的成功結果。
+
+    分支沒走到的那一邊是 CANCELLED、沒有結果，直接略過——所以同一條 workflow
+    走不同分支時 key 會不同，但結構一致（都是 {step_key: result}）。
+    """
+    depended_on = {dep for s in all_steps for dep in s.depends_on}
+    terminal = [s for s in all_steps if str(s.task_id) not in depended_on]
+    if not terminal:
+        return {}
+
+    result = collect_step_results(db, [str(s.task_id) for s in terminal])
+    output = {}
+    for step, result in zip(terminal, result):
+        if result is None:
+            continue
+        # for_each 展開出來的 task 沒有 step_key，退回用 task id 當標籤
+        output[step.step_key or str(step.task_id)] = result
+    return output
 
 _STEP_PLACEHOLDER = re.compile(
     r"\{\{\s*steps\.([a-zA-Z0-9_]+)\.result((?:\.[a-zA-Z0-9_]+)*)\s*\}\}"

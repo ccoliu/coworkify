@@ -26,7 +26,9 @@ class Workflow(Base):
     # 使用（一個 workflow 建立後只留展開的 Task/WorkflowStep，原始樣板本來不會保留）。
     # 舊資料（此欄位新增前建立的 workflow）會是 None。
     steps_template: Mapped[Optional[List[Any]]] = mapped_column(JSON, nullable=True, default=None)
-
+    # workflow 的「成品」：所有終端 step 的成功結果，在整條 workflow 轉成
+    # SUCCESS 時由 executor 收集寫入。失敗或還在跑的 workflow 是 None。
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     steps: Mapped[List["WorkflowStep"]] = relationship(
         "WorkflowStep", back_populates="workflow", cascade="all, delete-orphan"
     )

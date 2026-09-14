@@ -18,6 +18,7 @@ const CRON_PRESETS = [
 function stepsToDrafts(steps: WorkflowSchedule['steps']): StepDraft[] {
     return steps.map((s) => ({
         uid: s.key,
+        key: s.key,
         name: s.name,
         taskType: s.task_type,
         payload: s.payload,

@@ -107,6 +107,8 @@ export interface Workflow {
   // null for a workflow created before this field existed — such a
   // workflow can't be promoted to a schedule (there's no template to reuse).
   steps_template: WorkflowStepCreate[] | null
+  // 整條 workflow 成功時的終端結果，{step_key: result}；失敗或執行中是 null
+  result: Record<string, unknown> | null
 }
 
 export interface WorkflowStepCreate {

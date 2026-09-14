@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, deleteWorkflow, getWorkflow } from '../lib/apiClient'
+import { ApiError, deleteWorkflow, getWorkflow, rerunWorkflow } from '../lib/apiClient'
 import { formatDateTime } from '../lib/format'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -17,12 +17,24 @@ import { useWideLayout } from '../context/LayoutContext'
 
 export function WorkflowDetail() {
     const { id } = useParams<{ id: string }>()
+    useWideLayout()
     const [showScheduleModal, setShowScheduleModal] = useState(false)
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
     const queryClient = useQueryClient()
     const navigate = useNavigate()
     const { push } = useToast()
     const { events, status: wsStatus } = useWs()
+    const rerun = useMutation({
+        mutationFn: rerunWorkflow,
+        onSuccess: (created) => {
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            push('Re-run started', 'success')
+            navigate(`/workflows/${created.id}`)
+        },
+        onError: (err) => {
+            push(err instanceof ApiError ? err.message : 'Failed to re-run workflow', 'error')
+        },
+    })
 
     const remove = useMutation({
         mutationFn: deleteWorkflow,
@@ -99,19 +111,30 @@ export function WorkflowDetail() {
                     </div>
                     <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
                 </div>
-                {workflow.steps_template && (
-                    <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
-                        Schedule this workflow
+                <div className='flex items-end gap-2'>
+                    {workflow.steps_template && (
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="secondary"
+                                disabled={rerun.isPending}
+                                onClick={() => rerun.mutate(workflow.id)}
+                            >
+                                {rerun.isPending ? 'Starting…' : 'Re-run'}
+                            </Button>
+                            <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
+                                Schedule this workflow
+                            </Button>
+                        </div>
+                    )}
+                    <Button
+                        variant="danger"
+                        onClick={() => {
+                            if (confirm(`Delete workflow "${workflow.name}"?`)) remove.mutate(workflow.id)
+                        }}
+                    >
+                        Delete
                     </Button>
-                )}
-                <Button
-                    variant="danger"
-                    onClick={() => {
-                        if (confirm(`Delete workflow "${workflow.name}"?`)) remove.mutate(workflow.id)
-                    }}
-                >
-                    Delete
-                </Button>
+                </div>
             </div>
 
             {showScheduleModal && (
@@ -153,6 +176,22 @@ export function WorkflowDetail() {
                     )}
                 </div>
             </Card>
+
+            {workflow.result && Object.keys(workflow.result).length > 0 && (
+                <Card className="p-5">
+                    <h2 className="mb-3 text-sm font-semibold text-ink">Result</h2>
+                    <div className="flex flex-col gap-3">
+                        {Object.entries(workflow.result).map(([key, value]) => (
+                            <div key={key}>
+                                <p className="mb-1 font-mono text-xs text-ink-muted">{key}</p>
+                                <pre className="max-h-64 overflow-auto rounded-lg bg-plane p-3 font-mono text-xs text-ink-secondary">
+                                    {JSON.stringify(value, null, 2)}
+                                </pre>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+            )}
         </div>
     )
 }

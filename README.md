@@ -22,11 +22,14 @@
 - **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
 - **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
 - **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
+- **視覺化 Workflow 編輯器**：在畫布上拖拉節點、拉線就是依賴關係，`condition` 節點的 `true` / `false` 出口直接對應 if/else 分支；前端即時鏡射後端的 DAG 驗證規則，問題標在節點上並擋住送出。
+- **明確的輸入與輸出**：`input` 節點是整條 workflow 的資料入口，下游用 `{{steps.<key>.result.<欄位>}}` 取用；跑完後所有終端節點的結果會收進 `workflows.result`，不用再逐一翻每個節點的執行紀錄。
+- **一鍵重跑**：workflow 建立時會保留原始 step 樣板，`POST /workflows/{id}/rerun` 沿用它再跑一次，舊那次的狀態與紀錄完整保留。
 - **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
 - **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
-- **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化，並有可視化 DAG 流程圖檢視 workflow 執行進度。
+- **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化；workflow 詳情頁用同一套畫布以唯讀模式呈現執行進度，節點依狀態上色、WebSocket 即時更新。
 
 ---
 
@@ -34,15 +37,43 @@
 
 ## 內建支援的任務類型 (Supported Task Handlers)
 
+這份清單由 `app/tasks/catalog.py` 定義、透過 `GET /tasks/types` 提供欄位規格，前端的任務建立表單與 workflow 屬性面板都照它動態產生——**新增一種任務類型不用改前端**。
+
 | 任務類型 (task_type) | 說明 |
 | :--- | :--- |
-| `echo` | 簡單回聲任務，用於測試系統連通性 |
-| `heavy_computation` | 模擬耗時運算任務，可指定執行時間 |
-| `flaky_task` | 模擬可能失敗的任務，用於測試自動重試機制 |
+| `input` | workflow 的資料入口。payload 帶一段 JSON，它的結果就是整條 workflow 的「原料」，下游用 `{{steps.<key>.result.<欄位>}}` 取用 |
+| `python` | 在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 `main()`，它的回傳值會自動成為結果的 `result.value` |
+| `shell` | 在受限的 subprocess 裡執行一段 shell 指令 |
+| `http_request` | 發送一個 HTTP 請求，會擋掉指向內網或 cloud metadata endpoint 的目標 |
+| `condition` | 評估一個條件並回傳 `passed=true/false`，本身永遠成功；下游用 `branch_of` + `branch_when` 指向它來實現 if/else 分支 |
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
 > 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。
 >
 > 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
+
+> `python` 與 `shell` 以受限的 subprocess 執行（timeout、CPU / 記憶體上限、清空環境變數，見 `app/tasks/sandbox.py`）。**這不是完整沙箱**——它仍與 worker 共用檔案系統與網路，不要拿來跑不受信任的輸入。
+
+早期的示範 handler（`echo`、`heavy_computation`、`flaky_task`、`job_search` 等）仍註冊在 `TASK_REGISTRY` 裡（既有資料與測試還在引用），但刻意不列進上面的目錄，前端的任務類型選單不會出現它們。
+
+---
+
+## 視覺化 Workflow 編輯器
+
+![Workflow builder](<workflow-builder.png>)
+
+`/workflows/new` 是一張以 React Flow 建成的畫布，自動排版用 dagre：
+
+- **拖拉建置**：左側面板把任務類型拖進畫布就是一個節點，節點之間拉一條線就是 `depends_on`
+- **分支即連線**：`condition` 節點右側有 `true` / `false` 兩個出口，從哪個出口拉線出去，就自動設好該步驟的 `branch_of` / `branch_when`，不需要手動對應 step key
+- **屬性面板**：右側表單依 `GET /tasks/types` 的欄位規格動態產生；`python` / `shell` 的程式碼欄位是 CodeMirror 編輯器（語法高亮、自動縮排、可放大成 modal 編輯，也可以直接上傳 `.py`）
+- **即時驗證**：前端鏡射了一份後端 `validate_dag` 的規則（見 `frontend/src/features/workflows/validateGraph.ts`），問題會即時標在節點上、列在畫布上方，有錯就擋住送出。後端那份仍是最終把關，兩邊必須同步維護
+- **快捷鍵**：`Delete` 刪除選取的節點或連線、`Esc` 取消選取、`Ctrl+D` 複製節點、`L` 自動排版、`F` 置中
+
+Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況：節點依 task 狀態上色、透過 WebSocket 即時更新，沒被選中的那一邊分支會淡化顯示為 `cancelled`，點任一節點可查看它的 payload 與錯誤訊息。
+
+![Workflow run view](<workflow-run.png>)
+
+上圖是一條巢狀分支的 workflow：`condition_1` 走 `false` 進到 `python_2`，`condition_2` 走 `true` 進到 `shell_2`；沒被選中的 `shell_1`、`shell_3` 連同下游標記為 `cancelled`，整條 workflow 仍是 `Success`——分支沒命中是預期結果，不是失敗。
 
 ---
 
@@ -92,21 +123,46 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
 | `POST` | `/workflows/` | 建立一組 DAG workflow，自動派送沒有依賴的根節點任務 |
-| `GET` | `/workflows/{workflow_id}` | 查詢 workflow 整體狀態與每個節點對應任務的即時狀態 |
+| `GET` | `/workflows/` | 分頁列出所有 workflow |
+| `GET` | `/workflows/{workflow_id}` | 查詢 workflow 整體狀態、每個節點對應任務的即時狀態與最終 `result` |
+| `POST` | `/workflows/{workflow_id}/rerun` | 沿用原始 step 樣板再跑一次，建立一個**新的** workflow，舊那次的狀態與紀錄完整保留 |
+| `POST` | `/workflows/{workflow_id}/promote-to-schedule` | 把這個 workflow 的 step 樣板註冊成 cron 週期排程 |
+| `DELETE` | `/workflows/{workflow_id}` | 刪除 workflow |
 
-一個 3 節點線性 workflow 範例：
+一個「餵一批資料進去，下游取用它」的最小範例：
 ```json
 POST /workflows/
 {
   "name": "demo-pipeline",
   "steps": [
-    { "key": "t1", "name": "step1", "task_type": "echo", "payload": {"message": "step1"}, "depends_on": [] },
-    { "key": "t2", "name": "step2", "task_type": "echo", "payload": {"message": "step2"}, "depends_on": ["t1"] },
-    { "key": "t3", "name": "step3", "task_type": "echo", "payload": {"message": "step3"}, "depends_on": ["t2"] }
+    {
+      "key": "input_1", "name": "input", "task_type": "input",
+      "payload": { "data": "{\"keyword\": \"backend\"}" },
+      "depends_on": []
+    },
+    {
+      "key": "greet", "name": "build-greeting", "task_type": "python",
+      "payload": { "code": "def main():\n    return {\"greeting\": \"hello {{steps.input_1.result.keyword}}\"}" },
+      "depends_on": ["input_1"]
+    }
   ]
 }
 ```
-`depends_on` 可以填多個 key，支援分支與合併（真正的 DAG，不只是線性鏈）；任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`。
+
+**資料怎麼流動**
+
+- `{{steps.<key>.result}}` / `{{steps.<key>.result.<欄位>}}`：取用上游步驟的結果，在派送前由 executor 代換。**step key 只能用英數字與底線**，代換的 regex 是 `[a-zA-Z0-9_]+`
+- `{{item}}` / `{{item.<欄位>}}`：`for_each` 動態展開時取用當前項目
+- `{{items}}`：`reduce_of` 步驟取用被收斂的所有結果
+- payload 參照了某個 step，就必須把它加進 `depends_on`，否則建立時會被擋下——不然無法保證它先執行
+
+**分支與失敗**
+
+- `depends_on` 可以填多個 key，支援分支與合併（真正的 DAG，不只是線性鏈）
+- `branch_of` + `branch_when` 指向一個 `condition` 步驟，只有結果相符的那一邊會執行；另一邊連同它的下游會被標記為 `cancelled`——這是**預期結果，不代表 workflow 失敗**
+- 任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`
+
+**輸出**：workflow 全部完成時，所有終端節點（沒有其他步驟依賴它）的成功結果會收進 `workflows.result`，格式是 `{step_key: result}`，可在 `GET /workflows/{id}` 的回應與詳情頁的 Result 卡片看到。
 
 ### Schedules（週期性排程）
 | Method | Endpoint | 說明 |
@@ -167,6 +223,6 @@ React + TypeScript + Tailwind SPA，細節見 [frontend/README.md](frontend/READ
 
 - **登入頁**：支援註冊新帳號或用既有帳號登入，登入後 JWT 存在瀏覽器 localStorage，重新整理不用再登入一次。
 - **Tasks 頁**：任務列表、篩選、建立單一任務，狀態透過 WebSocket 即時更新。
-- **Workflows 頁**：列出所有建立過的 workflow，可用多步驟表單建立新的 DAG（每個步驟可勾選要依賴哪些前面的步驟、或設定 `for_each` 動態展開來源），點進去可看拓樸分層畫出來的管線圖，每個節點即時顯示執行狀態。
-- **Schedules 頁**：管理週期性 workflow，用同一套步驟編輯器搭配 cron 表達式輸入（含常用預設如「每天 9:00」），顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。
+- **Workflows 頁**：列出所有建立過的 workflow；「New workflow」進入視覺化畫布編輯器（見上方[章節](#視覺化-workflow-編輯器)）。點進任一 workflow 是同一套畫布的唯讀執行檢視，每個節點即時顯示狀態，全部跑完後下方出現 Result，並可一鍵 Re-run 或升級成排程。
+- **Schedules 頁**：管理週期性 workflow，搭配 cron 表達式輸入（含常用預設如「每天 9:00」），顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。步驟編輯目前仍是表單式的舊介面，尚未換成畫布。
 - **Ops 頁**：佇列深度、吞吐量走勢圖、錯誤率等即時監控指標。

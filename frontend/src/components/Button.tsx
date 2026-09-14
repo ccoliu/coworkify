@@ -20,10 +20,14 @@ export function Button({
   variant = 'secondary',
   className,
   disabled,
+  // <form> 裡沒指定 type 的 button 預設是 submit，會讓「Auto layout」「Delete」
+  // 這種純操作按鈕意外送出表單。需要送出的地方都有自己寫 type="submit"。
+  type = 'button',
   ...props
 }: ButtonProps) {
   return (
     <button
+      type={type}
       disabled={disabled}
       className={clsx(
         'inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors',

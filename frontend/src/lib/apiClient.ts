@@ -28,6 +28,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * FastAPI 的 detail 有兩種長相：我們自己 raise HTTPException 時是字串，
+ * pydantic 驗證失敗（422）時是 [{loc, msg, type}, …]。後者直接塞進 Error
+ * 會變成 "[object Object]"，這裡統一攤平。
+ */
+function formatApiDetail(detail: unknown, fallback: string): string {
+  if (typeof detail === 'string') return detail
+
+  const items = Array.isArray(detail) ? detail : [detail]
+  const messages = items
+    .map((item) => {
+      if (typeof item === 'string') return item
+      const msg = (item as { msg?: unknown } | null)?.msg
+      return typeof msg === 'string' ? msg : null
+    })
+    .filter((m): m is string => m !== null)
+    // pydantic 會在自訂 ValueError 前面加 "Value error, "，對使用者沒意義
+    .map((m) => m.replace(/^Value error,\s*/, ''))
+
+  return messages.length > 0 ? messages.join('；') : fallback
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getAuthToken()
   const headers = new Headers(init.headers)
@@ -40,7 +62,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let detail = res.statusText
     try {
       const body = await res.json()
-      detail = body.detail ?? detail
+      detail = formatApiDetail(body.detail, detail)
     } catch {
       // response had no JSON body
     }
@@ -114,6 +136,10 @@ export function getWorkflow(id: string): Promise<Workflow> {
 
 export function createWorkflow(workflow: WorkflowCreate): Promise<Workflow> {
   return request('/workflows/', { method: 'POST', body: JSON.stringify(workflow) })
+}
+
+export function rerunWorkflow(id: string): Promise<Workflow> {
+  return request(`/workflows/${id}/rerun`, { method: 'POST' })
 }
 
 export function promoteWorkflowToSchedule(

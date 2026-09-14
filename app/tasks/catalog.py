@@ -45,6 +45,25 @@ _SANDBOX_HELP = (
 
 TASK_TYPE_CATALOG = [
     {
+        "task_type": "input",
+        "label": "Input",
+        "description": "workflow 的資料入口。這一步的結果就是這條 workflow 的「原料」，"
+                       "下游步驟用 '{{steps.<這個 step 的 key>.result.欄位}}' 取用。",
+        "fields": [
+            {
+                "key": "data",
+                "label": "Input data (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "{}",
+                "required": False,
+                "help": "一段 JSON 物件或陣列。例如 {\"keyword\": \"backend\", \"limit\": 3}，"
+                        "下游就能寫 '{{steps.input_1.result.keyword}}'。",
+                "upload_accept": ".json",
+            },
+        ],
+    },
+    {
         "task_type": "python",
         "label": "Python",
         "description": "在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 main()，"
