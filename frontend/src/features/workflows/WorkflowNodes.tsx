@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { StatusBadge } from '../../components/StatusBadge'
 import type { TaskStatus } from '../../lib/types'
 import { NODE_WIDTH, type StepNode, type StepNodeData } from './graphModel'
-import { PythonIcon, BashIcon, WebIcon, SplitIcon, RobotIcon, BiImportIcon } from '../../components/Icon'
+import { getIcon } from '../../components/Icon'
 
 const STATUS_BORDER: Record<TaskStatus, string> = {
     pending: 'border-border',
@@ -66,11 +66,7 @@ export function TaskNode({ data }: NodeProps<StepNode>) {
     return (
         <div style={{ width: NODE_WIDTH }} className={shellClass(data)}>
             <div className="flex items-center gap-1.5">
-                {data.taskType === 'input' && <BiImportIcon />}
-                {data.taskType === 'python' && <PythonIcon />}
-                {data.taskType === 'http_request' && <WebIcon />}
-                {data.taskType === 'shell' && <BashIcon />}
-                {data.taskType === 'agent_step' && <RobotIcon />}
+                {getIcon(data.taskType)}
             </div>
             {/* input 是 workflow 的資料入口，沒有上游，不畫接點 */}
             {data.taskType !== 'input' && (
@@ -111,7 +107,7 @@ export function ConditionNode({ data, isConnectable }: NodeProps<StepNode>) {
     return (
         <div style={{ width: NODE_WIDTH }} className={shellClass(data)}>
             <div className="flex items-center gap-1.5">
-                {data.taskType === 'condition' && <SplitIcon />}
+                {getIcon(data.taskType)}
             </div>
             <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
             <NodeHeader data={data} />
