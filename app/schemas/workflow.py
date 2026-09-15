@@ -42,9 +42,8 @@ class WorkflowStepCreate(BaseModel):
         None, description="搭配 branch_of 使用：這個分支要在 condition 結果是 true 還是 false 時執行。"
     )
 
-
-class WorkflowCreate(BaseModel):
-    name: str = Field(..., max_length=255)
+class StepsGraph(BaseModel):
+    """steps + DAG 驗證；一次性 workflow 與 workflow definition 共用。"""
     steps: List[WorkflowStepCreate] = Field(..., min_length=1)
 
     @model_validator(mode="after")
@@ -194,6 +193,10 @@ class WorkflowCreate(BaseModel):
 
         return self
 
+class WorkflowCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    
+
 class WorkflowStepResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -224,3 +227,6 @@ class WorkflowResponse(BaseModel):
     steps_template: Optional[List[Dict[str, Any]]] = None
     # 整條 workflow 成功時收集的終端結果；失敗或執行中是 None
     result: Optional[Dict[str, Any]] = None
+    definition_id: Optional[UUID] = None
+    definition_version: Optional[int] = None
+    input: Optional[Dict[str, Any]] = None

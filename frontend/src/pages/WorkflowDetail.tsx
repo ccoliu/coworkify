@@ -26,7 +26,7 @@ export function WorkflowDetail() {
     const { events, status: wsStatus } = useWs()
 
     const rerun = useMutation({
-        mutationFn: retryWorkflow,
+        mutationFn: rerunWorkflow,
         onSuccess: (created) => {
             queryClient.invalidateQueries({ queryKey: ['workflows'] })
             push('Re-run started', 'success')
@@ -35,7 +35,7 @@ export function WorkflowDetail() {
         onError: (err) => {
             push(err instanceof ApiError ? err.message : 'Failed to re-run workflow', 'error')
         },
-    }) //deprecated
+    })
 
     const retry = useMutation({
         mutationFn: retryWorkflow,
@@ -134,16 +134,20 @@ export function WorkflowDetail() {
                             {retry.isPending ? 'Retrying…' : 'Retry failed steps'}
                         </Button>
                     )}
-                    <Button
-                        variant="secondary"
-                        disabled={rerun.isPending}
-                        onClick={() => rerun.mutate(workflow.id)}
-                    >
-                        {rerun.isPending ? 'Starting…' : 'Re-run'}
-                    </Button>
-                    <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
-                        Schedule this workflow
-                    </Button>
+                    {workflow.steps_template && (
+                        <>
+                            <Button
+                                variant="secondary"
+                                disabled={rerun.isPending}
+                                onClick={() => rerun.mutate(workflow.id)}
+                            >
+                                {rerun.isPending ? 'Starting…' : 'Re-run'}
+                            </Button>
+                            <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
+                                Schedule this workflow
+                            </Button>
+                        </>
+                    )}
                     <Button
                         variant="danger"
                         onClick={() => {

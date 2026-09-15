@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, List, Optional
 from enum import Enum
-from sqlalchemy import UUID, String, DateTime, JSON, ForeignKey, Integer, Boolean, func
+from sqlalchemy import UUID, String, Text, DateTime, JSON, ForeignKey, Integer, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
@@ -11,6 +11,31 @@ class WorkFlowStatus(str, Enum):
     PENDING = "pending"
     SUCCESS = "success"
     FAILED = "failed"
+
+class WorkflowDefinition(Base):
+    """
+    一條「產線」：步驟樣板 + 輸入規格。本身不執行——每次執行是一筆 Workflow（run）。
+    run 建立時會把當下的 steps 複製一份到自己的 steps_template，之後改定義不會改寫歷史。
+    """
+    __tablename__ = "workflow_definitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, index = True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # WorkflowStepCreate 的 dict list
+    steps: Mapped[List[Any]] = mapped_column(JSON, nullable=False)
+    # InputFieldSpec 的 dict list，跟 GET /tasks/types 的 field spec 同形
+    input_schema: Mapped[List[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # steps 或 input_schema 有變才 +1；run 記下自己用的是哪一版
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
+
 
 class Workflow(Base):
     __tablename__ = "workflows"
@@ -32,6 +57,17 @@ class Workflow(Base):
     steps: Mapped[List["WorkflowStep"]] = relationship(
         "WorkflowStep", back_populates="workflow", cascade="all, delete-orphan"
     )
+    # 這次 run 屬於哪條產線。舊資料、以及直接打 POST /workflows/ 建立的一次性 workflow 是 None；
+    # 定義被刪掉時 DB 會設回 NULL（run 的紀錄保留）。
+    definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workflow_definitions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    definition_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 這次 run 經 input_schema 檢查、補完預設值後的輸入；rerun 會沿用它
+    input: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
 
 class WorkflowStep(Base):
     __tablename__ = "workflow_steps"

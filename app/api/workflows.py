@@ -119,7 +119,14 @@ def rerun_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
             "— recreate it via POST /workflows/ to enable re-running.",
         )
     
-    new_workflow = create_workflow_from_steps(db, workflow.name, workflow.steps_template)
+    new_workflow = create_workflow_from_steps(
+        db,
+        workflow.name,
+        workflow.steps_template,
+        definition_id=workflow.definition_id,
+        definition_version=workflow.definition_version,
+        run_input=workflow.input,
+    )
     _attach_task_details(db, new_workflow.steps)
     return new_workflow
 

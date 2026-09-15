@@ -1,4 +1,4 @@
-from celery.app.registry import TaskRegistry
+import copy
 import re
 import time
 import traceback
@@ -147,7 +147,7 @@ def dispatch_task(task: Task):
         args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type)
     )
 
-def _downsteam_task_ids(all_steps: list[WorkflowStep], from_task_ids) -> set:
+def _downstream_task_ids(all_steps: list[WorkflowStep], from_task_ids) -> set:
     """沿 depends_on 往下游走訪，回傳所有受 from_task_ids 影響的 task id（不含起點自己）。"""
     found = set()
     frontier = list(from_task_ids)
@@ -166,7 +166,7 @@ def _cascade_cancel(db, all_steps: list[WorkflowStep], from_task_ids, reason: st
     呼叫端如果連它們自己也要取消，要自己先處理）。
     FAILED 的下游取消、branch 選錯邊的下游取消都靠這個。
     """
-    to_cancel_ids = _downsteam_task_ids(all_steps, from_task_ids)
+    to_cancel_ids = _downstream_task_ids(all_steps, from_task_ids)
     for tid in to_cancel_ids:
         t = db.get(Task, tid)
         if t and t.status == TaskStatus.PENDING:
@@ -319,7 +319,7 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
     if not failed_ids:
         return 0
 
-    affected = _downsteam_task_ids(all_steps, failed_ids)
+    affected = _downstream_task_ids(all_steps, failed_ids)
 
     # reduce 步驟在上游展開之前 depends_on 是空的，走訪走不到它，但失敗時會被
     # advance_workflow 另外取消。這裡要一起收回來，否則它會永遠停在 CANCELLED。
@@ -342,10 +342,11 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
         if not cond_task or cond_task.status != TaskStatus.SUCCESS:
             continue
         passed = _condition_result(db, cond_task.id)
-        if passed is None and ("true" if passed else "false") != step.branch_when:
+        if passed is not None and ("true" if passed else "false") != step.branch_when:
             branch_losers.add(tid)
     
-    to_reset = (set(failed_ids) | affected) - branch_losers
+    loser_downstream = _downstream_task_ids(all_steps, branch_losers) if branch_losers else set()
+    to_reset = (set(failed_ids) | affected) - branch_losers - loser_downstream
 
     for tid in to_reset:
         t = tasks_by_id.get(tid)
@@ -359,12 +360,6 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
     workflow.result = None
     db.commit()
 
-    # 出局分支的下游剛剛也被重設成 PENDING 了，要再取消一次，
-    # 否則它們會卡在 PENDING、workflow 永遠回不到 SUCCESS。
-    if branch_losers:
-        _cascade_cancel(db, all_steps, list(branch_losers), "條件分支未命中，已取消")
-        db.commit()
-
     # 失敗那幾顆的上游都還是 SUCCESS，可以直接重新派送；
     # 其餘重設成 PENDING 的下游會由 advance_workflow 依序帶起來。
     for tid in failed_ids:
@@ -374,14 +369,39 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
 
     return len(to_reset)
 
+def _inject_run_input(steps: list[dict], run_input: dict) -> list[dict]:
+    """把這次 run 的輸入塞進 input step 的 payload.data。回傳新的 list，不改到傳進來的定義。"""
+    injected = copy.deepcopy(steps)
+    for step in injected:
+        if step["task_type"] == "input":
+            step["payload"] = {**step.get("payload", {}), "data": run_input}
+    return injected
+
     
-def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
+def create_workflow_from_steps(db,
+    name: str,
+    steps: list[dict],
+    *,
+    definition_id=None,
+    definition_version: int | None = None,
+    run_input: dict | None = None,
+) -> Workflow:
     """建立 workflow + 派送根節點；供 API 與排程共用"""
     # 存一份原始樣板，讓這個 workflow 之後可以直接被「升級成排程」
     # （見 app/api/workflows.py 的 promote-to-schedule），不用重新手動輸入一次 steps。
-    workflow = Workflow(name=name, status="pending", steps_template=steps)
+    workflow = Workflow(
+        name=name,
+        status="pending",
+        steps_template=steps,
+        definition_id=definition_id,
+        definition_version=definition_version,
+        input=run_input,
+    )
     db.add(workflow)
     db.flush()
+
+    if run_input is not None:
+        steps = _inject_run_input(steps, run_input)
 
     concrete_steps = [s for s in steps if not s.get("for_each")]
     template_steps = [s for s in steps if s.get("for_each")]

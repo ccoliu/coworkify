@@ -8,6 +8,7 @@ from app.api.workflows import router as workflows_router
 from app.api.auth import router as auth_router
 from app.api.schedule import router as schedule_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.api.definitions import router as definitions_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,6 +37,7 @@ app.include_router(ws_router)
 app.include_router(workflows_router)
 app.include_router(auth_router)
 app.include_router(schedule_router)
+app.include_router(definitions_router)
 
 @app.get("/health")
 def health_check():
