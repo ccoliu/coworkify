@@ -51,7 +51,7 @@ export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { w
                                         onClick={() => onRerun(wf.id)}
                                         disabled={isRerunning}
                                     >
-                                        {isRerunning ? 'Running…' : 'Rerun'}
+                                        {isRerunning ? 'Running…' : 'Retry'}
                                     </Button>
                                     <Button
                                         variant="danger"

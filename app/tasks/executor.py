@@ -1,3 +1,4 @@
+from celery.app.registry import TaskRegistry
 import re
 import time
 import traceback
@@ -146,22 +147,26 @@ def dispatch_task(task: Task):
         args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type)
     )
 
-
-def _cascade_cancel(db, all_steps: list[WorkflowStep], from_task_ids, reason: str) -> set:
-    """
-    從 from_task_ids 開始，往下游走訪 depends_on 圖，把還是 PENDING 的 task
-    標成 CANCELLED（不包含 from_task_ids 自己——呼叫端如果連它們自己也要取消，
-    要自己先處理）。FAILED 的下游取消、branch 選錯邊的下游取消都靠這個。
-    """
-    to_cancel_ids = set()
+def _downsteam_task_ids(all_steps: list[WorkflowStep], from_task_ids) -> set:
+    """沿 depends_on 往下游走訪，回傳所有受 from_task_ids 影響的 task id（不含起點自己）。"""
+    found = set()
     frontier = list(from_task_ids)
     while frontier:
         current = frontier.pop()
         for s in all_steps:
-            if str(current) in s.depends_on and s.task_id not in to_cancel_ids:
-                to_cancel_ids.add(s.task_id)
+            if str(current) in s.depends_on and s.task_id not in found:
+                found.add(s.task_id)
                 frontier.append(s.task_id)
+    return found
 
+
+def _cascade_cancel(db, all_steps: list[WorkflowStep], from_task_ids, reason: str) -> set:
+    """
+    從 from_task_ids 開始，把下游還是 PENDING 的 task 標成 CANCELLED（不含起點自己——
+    呼叫端如果連它們自己也要取消，要自己先處理）。
+    FAILED 的下游取消、branch 選錯邊的下游取消都靠這個。
+    """
+    to_cancel_ids = _downsteam_task_ids(all_steps, from_task_ids)
     for tid in to_cancel_ids:
         t = db.get(Task, tid)
         if t and t.status == TaskStatus.PENDING:
@@ -296,6 +301,79 @@ def advance_workflow(db, task: Task):
 
         workflow.status = WorkFlowStatus.FAILED
         db.commit()
+
+def retry_workflow_from_failure(db, workflow: Workflow) -> int:
+    """
+    從失敗點續跑：把失敗的 task 和它連坐取消的下游重設為 PENDING，重新派送失敗的那幾顆。
+
+    兩種 CANCELLED 在這裡是分得開的——重新走一次失敗 task 的下游閉包，落在閉包裡的
+    就是被連坐取消的（該喚醒）；落在閉包外的是分支沒命中（該維持取消）。所以不需要
+    在取消當下額外記錄原因。
+
+    回傳被重設的 task 數量。
+    """
+    all_steps = db.scalars(select(WorkflowStep).where(WorkflowStep.workflow_id == workflow.id)).all()
+    tasks_by_id = {s.task_id: db.get(Task, s.task_id) for s in all_steps}
+
+    failed_ids = [tid for tid, t in tasks_by_id.items() if t and t.status == TaskStatus.FAILED]
+    if not failed_ids:
+        return 0
+
+    affected = _downsteam_task_ids(all_steps, failed_ids)
+
+    # reduce 步驟在上游展開之前 depends_on 是空的，走訪走不到它，但失敗時會被
+    # advance_workflow 另外取消。這裡要一起收回來，否則它會永遠停在 CANCELLED。
+    for s in all_steps:
+        if s.reduce_of_key and not s.depends_on:
+            t = tasks_by_id.get(s.task_id)
+            if t and t.status == TaskStatus.CANCELLED:
+                affected.add(s.task_id)
+
+    # 分支已經判定出局的步驟不該被喚醒：它的 condition 已經成功、結果也不符，
+    # 重跑上游不會改變那個判定（condition 不會再跑一次去觸發取消）。
+    step_by_task = {s.task_id: s for s in all_steps}
+    task_id_by_key = {s.step_key: s.task_id for s in all_steps if s.step_key}
+    branch_losers = set()
+    for tid in affected:
+        step = step_by_task.get(tid)
+        if not step or not step.branch_of_key:
+            continue
+        cond_task = tasks_by_id.get(task_id_by_key.get(step.branch_of_key))
+        if not cond_task or cond_task.status != TaskStatus.SUCCESS:
+            continue
+        passed = _condition_result(db, cond_task.id)
+        if passed is None and ("true" if passed else "false") != step.branch_when:
+            branch_losers.add(tid)
+    
+    to_reset = (set(failed_ids) | affected) - branch_losers
+
+    for tid in to_reset:
+        t = tasks_by_id.get(tid)
+        if not t or t.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            continue
+        t.status = TaskStatus.PENDING
+        t.retry_count = 0
+        notify_status_change(str(t.id), TaskStatus.PENDING, None, None)
+    
+    workflow.status = WorkFlowStatus.PENDING
+    workflow.result = None
+    db.commit()
+
+    # 出局分支的下游剛剛也被重設成 PENDING 了，要再取消一次，
+    # 否則它們會卡在 PENDING、workflow 永遠回不到 SUCCESS。
+    if branch_losers:
+        _cascade_cancel(db, all_steps, list(branch_losers), "條件分支未命中，已取消")
+        db.commit()
+
+    # 失敗那幾顆的上游都還是 SUCCESS，可以直接重新派送；
+    # 其餘重設成 PENDING 的下游會由 advance_workflow 依序帶起來。
+    for tid in failed_ids:
+        t = tasks_by_id[tid]
+        if t:
+            dispatch_task(t)
+
+    return len(to_reset)
+
     
 def create_workflow_from_steps(db, name: str, steps: list[dict]) -> Workflow:
     """建立 workflow + 派送根節點；供 API 與排程共用"""

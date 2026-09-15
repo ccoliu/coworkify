@@ -142,6 +142,10 @@ export function rerunWorkflow(id: string): Promise<Workflow> {
   return request(`/workflows/${id}/rerun`, { method: 'POST' })
 }
 
+export function retryWorkflow(id: string): Promise<Workflow> {
+  return request(`/workflows/${id}/retry`, { method: 'POST' })
+}
+
 export function promoteWorkflowToSchedule(
   id: string,
   body: PromoteWorkflowToSchedule,

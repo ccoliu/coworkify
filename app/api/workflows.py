@@ -9,11 +9,11 @@ from sqlalchemy import select, delete, update
 from app.db import get_db
 from app.models.task import Task
 from app.models.user import User
-from app.models.workflow import Workflow, WorkflowStep, WorkflowStepTemplate
+from app.models.workflow import Workflow, WorkflowStep, WorkflowStepTemplate, WorkFlowStatus
 from app.models.schedule import WorkflowSchedule
 from app.schemas.workflow import WorkflowCreate, WorkflowResponse
 from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
-from app.tasks.executor import execute_task, create_workflow_from_steps
+from app.tasks.executor import execute_task, create_workflow_from_steps, retry_workflow_from_failure
 from app.core.security import get_current_user
 from app.core.rate_limit import RateLimiter
 from app.core.cron import compute_next_run
@@ -122,6 +122,32 @@ def rerun_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
     new_workflow = create_workflow_from_steps(db, workflow.name, workflow.steps_template)
     _attach_task_details(db, new_workflow.steps)
     return new_workflow
+
+@router.post("/{workflow_id}/retry", response_model=WorkflowResponse)
+def retry_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
+    """
+    從失敗的步驟續跑同一個 workflow（不是建立新的）——已經成功的上游不會重跑，
+    適合上游很貴的情況。整條重來請改用 /rerun。
+    """
+    workflow = db.get(Workflow, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if workflow.status != WorkFlowStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only a failed workflow can be retried — use /rerun to run it again from scratch."
+        )
+    
+    reset_count = retry_workflow_from_failure(db, workflow)
+    if reset_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This workflow is marked failed but has no failed task to retry.",
+        )
+
+    db.refresh(workflow)
+    _attach_task_details(db, workflow.steps)
+    return workflow
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, deleteWorkflow, getWorkflow, rerunWorkflow } from '../lib/apiClient'
+import { ApiError, deleteWorkflow, getWorkflow, rerunWorkflow, retryWorkflow } from '../lib/apiClient'
 import { formatDateTime } from '../lib/format'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -24,8 +24,9 @@ export function WorkflowDetail() {
     const navigate = useNavigate()
     const { push } = useToast()
     const { events, status: wsStatus } = useWs()
+
     const rerun = useMutation({
-        mutationFn: rerunWorkflow,
+        mutationFn: retryWorkflow,
         onSuccess: (created) => {
             queryClient.invalidateQueries({ queryKey: ['workflows'] })
             push('Re-run started', 'success')
@@ -33,6 +34,18 @@ export function WorkflowDetail() {
         },
         onError: (err) => {
             push(err instanceof ApiError ? err.message : 'Failed to re-run workflow', 'error')
+        },
+    }) //deprecated
+
+    const retry = useMutation({
+        mutationFn: retryWorkflow,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['workflow', id] })
+            queryClient.invalidateQueries({ queryKey: ['workflows'] })
+            push('Retrying from the failed step', 'success')
+        },
+        onError: (err) => {
+            push(err instanceof ApiError ? err.message : 'Failed to retry workflow', 'error')
         },
     })
 
@@ -111,21 +124,26 @@ export function WorkflowDetail() {
                     </div>
                     <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
                 </div>
-                <div className='flex items-end gap-2'>
-                    {workflow.steps_template && (
-                        <div className="flex items-center gap-2">
-                            <Button
-                                variant="secondary"
-                                disabled={rerun.isPending}
-                                onClick={() => rerun.mutate(workflow.id)}
-                            >
-                                {rerun.isPending ? 'Starting…' : 'Re-run'}
-                            </Button>
-                            <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
-                                Schedule this workflow
-                            </Button>
-                        </div>
+                <div className="flex items-center gap-2">
+                    {workflow.status === 'failed' && (
+                        <Button
+                            variant="secondary"
+                            disabled={retry.isPending}
+                            onClick={() => retry.mutate(workflow.id)}
+                        >
+                            {retry.isPending ? 'Retrying…' : 'Retry failed steps'}
+                        </Button>
                     )}
+                    <Button
+                        variant="secondary"
+                        disabled={rerun.isPending}
+                        onClick={() => rerun.mutate(workflow.id)}
+                    >
+                        {rerun.isPending ? 'Starting…' : 'Re-run'}
+                    </Button>
+                    <Button variant="secondary" onClick={() => setShowScheduleModal(true)}>
+                        Schedule this workflow
+                    </Button>
                     <Button
                         variant="danger"
                         onClick={() => {
