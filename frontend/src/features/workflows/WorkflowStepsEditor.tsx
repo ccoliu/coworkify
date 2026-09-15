@@ -303,3 +303,35 @@ export function toStepCreates(steps: StepDraft[]): WorkflowStepCreate[] {
         branch_when: s.branchWhen ?? undefined,
     }));
 }
+
+/**
+ * 載入用：toStepCreates 的反向。後端的 key 參照換回畫布內部的 uid。
+ * 不支援 reduce_of（StepDraft 沒有這個欄位）——呼叫端要先用 hasUnsupportedSteps 擋掉，
+ * 否則存回去會把 reduce 設定洗掉。
+ */
+export function fromStepCreates(creates: WorkflowStepCreate[]): StepDraft[] {
+    const uidByKey = new Map(creates.map((c) => [c.key, crypto.randomUUID()]))
+    const toUid = (key?: string | null) => (key ? uidByKey.get(key) : null) ?? null;
+
+
+    return creates.map((c) => ({
+        uid: uidByKey.get(c.key)!,
+        key: c.key,
+        name: c.name,
+        taskType: c.task_type,
+        payload: c.payload,
+        priority: c.priority,
+        maxRetries: c.max_retries,
+        dependsOnUids: c.depends_on.flatMap((k) => {
+            const uid = uidByKey.get(k)
+            return uid ? [uid] : []
+        }),
+        forEachUid: toUid(c.for_each),
+        branchOfUid: toUid(c.branch_of),
+        branchWhen: c.branch_when ?? null,
+    }))
+}
+
+export function hasUnsupportedSteps(creates: WorkflowStepCreate[]): boolean {
+    return creates.some((c) => c.reduce_of != null);
+}

@@ -54,7 +54,8 @@ export function WorkflowDetail() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['workflows'] })
             push('Workflow deleted', 'success')
-            navigate('/workflows')
+            queryClient.invalidateQueries({ queryKey: ['definitions'] })
+            navigate(workflow?.definition_id ? `/definitions/${workflow.definition_id}` : '/workflows')
         },
         onError: (err) => {
             push(err instanceof ApiError ? err.message : 'Failed to delete workflow', 'error')
@@ -115,9 +116,16 @@ export function WorkflowDetail() {
         <div className="flex flex-col gap-5">
             <div className="flex items-start justify-between gap-4">
                 <div>
-                    <Link to="/workflows" className="text-sm text-ink-muted hover:text-ink">
-                        ← Workflows
-                    </Link>
+                    {workflow.definition_id ? (
+                        <Link to={`/definitions/${workflow.definition_id}`} className="text-sm text-ink-muted hover:text-ink">
+                            ← {workflow.name}
+                            {workflow.definition_version != null && ` · v${workflow.definition_version}`}
+                        </Link>
+                    ) : (
+                        <Link to="/workflows" className="text-sm text-ink-muted hover:text-ink">
+                            ← Workflows
+                        </Link>
+                    )}
                     <div className="mt-1 flex items-center gap-3">
                         <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
                         <StatusBadge status={workflow.status} />
@@ -183,6 +191,15 @@ export function WorkflowDetail() {
                     </div>
                 </dl>
             </Card>
+
+            {workflow.input && Object.keys(workflow.input).length > 0 && (
+                <Card className="p-5">
+                    <h2 className="mb-3 text-sm font-semibold text-ink">Input</h2>
+                    <pre className="max-h-64 overflow-auto rounded-lg bg-plane p-3 font-mono text-xs text-ink-secondary">
+                        {JSON.stringify(workflow.input, null, 2)}
+                    </pre>
+                </Card>
+            )}
 
             <Card className="overflow-hidden p-0">
                 <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">

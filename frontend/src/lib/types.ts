@@ -109,6 +109,11 @@ export interface Workflow {
   steps_template: WorkflowStepCreate[] | null
   // 整條 workflow 成功時的終端結果，{step_key: result}；失敗或執行中是 null
   result: Record<string, unknown> | null
+  // 屬於哪個定義；舊資料與 POST /workflows/ 建立的一次性 workflow 是 null
+  definition_id: string | null
+  definition_version: number | null
+  // 這次 run 經 input_schema 檢查、補完預設值後的輸入
+  input: Record<string, unknown> | null
 }
 
 export interface WorkflowStepCreate {
@@ -172,4 +177,32 @@ export interface WorkflowScheduleUpdate {
   cron_expression?: string
   steps?: WorkflowStepCreate[]
   enabled?: boolean
+}
+
+export interface WorkflowRunSummary {
+  id: string
+  status: WorkflowStatus
+  created_at: string
+}
+
+export interface WorkflowDefinition {
+  id: string
+  name: string
+  description: string | null
+  steps: WorkflowStepCreate[]
+  // 跟 task-type catalog 的 field spec 同形，run 表單直接用 TaskPayloadFields 畫
+  input_schema: TaskFieldSpec[]
+  version: number
+  created_at: string
+  updated_at: string
+  run_count: number
+  last_run: WorkflowRunSummary | null
+}
+
+export interface WorkflowDefinitionCreate {
+  name: string
+  description?: string | null
+  steps: WorkflowStepCreate[]
+  // 透過 schema 描述哪些 field 給前端當參數輸入用（順序就是輸入頁面從上到下的欄位順序）
+  input_schema: TaskFieldSpec[]
 }

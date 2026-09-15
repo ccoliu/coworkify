@@ -12,6 +12,8 @@ import { WorkflowDetail } from './pages/WorkflowDetail'
 import { Workflows } from './pages/Workflows'
 import { Schedules } from './pages/Schedules'
 import { WorkflowBuilder } from './pages/WorkflowBuilder'
+import { DefinitionDetail } from './pages/DefinitionDetail'
+import { EditDefinition } from './pages/EditDefinition'
 
 function ProtectedArea() {
   const { user, isReady } = useAuth()
@@ -42,6 +44,8 @@ export function App() {
         <Route path="/workflows/:id" element={<WorkflowDetail />} />
         <Route path="/workflows/new" element={<WorkflowBuilder />} />
         <Route path="/schedules" element={<Schedules />} />
+        <Route path="/definitions/:id" element={<DefinitionDetail />} />
+        <Route path="/definitions/:id/edit" element={<EditDefinition />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

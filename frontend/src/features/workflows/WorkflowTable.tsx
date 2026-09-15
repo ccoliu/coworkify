@@ -5,7 +5,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { StatusBadge } from '../../components/StatusBadge'
 import { Button } from '../../components/Button'
 
-export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { workflows: Workflow[]; onRerun: (id: string) => void; onDelete: (id: string) => void; isRerunning: boolean }) {
+export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { workflows: Workflow[]; onRerun: (id: string) => void; onDelete?: (id: string) => void; isRerunning: boolean }) {
     if (workflows.length === 0) {
         return (
             <EmptyState
@@ -53,14 +53,16 @@ export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { w
                                     >
                                         {isRerunning ? 'Running…' : 'Rerun'}
                                     </Button>
-                                    <Button
-                                        variant="danger"
-                                        onClick={() => {
-                                            if (confirm(`Delete workflow "${wf.name}"?`)) onDelete(wf.id)
-                                        }}
-                                    >
-                                        Delete
-                                    </Button>
+                                    {onDelete && (
+                                        <Button
+                                            variant="danger"
+                                            onClick={() => {
+                                                if (confirm(`Delete workflow "${wf.name}"?`)) onDelete(wf.id)
+                                            }}
+                                        >
+                                            Delete
+                                        </Button>
+                                    )}
                                 </td>
                             </tr>
                         )

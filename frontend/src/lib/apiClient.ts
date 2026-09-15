@@ -12,6 +12,8 @@ import type {
   WorkflowSchedule,
   WorkflowScheduleCreate,
   WorkflowScheduleUpdate,
+  WorkflowDefinition,
+  WorkflowDefinitionCreate
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -175,4 +177,34 @@ export function deleteSchedule(id: string): Promise<void> {
 
 export function deleteWorkflow(id: string): Promise<void> {
   return request(`/workflows/${id}`, { method: 'DELETE' })
+}
+
+export function listDefinitions(limit = 20, offset = 0): Promise<WorkflowDefinition[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  return request(`/definitions/?${params.toString()}`)
+}
+
+export function getDefinition(id: string): Promise<WorkflowDefinition> {
+  return request(`/definitions/${id}`)
+}
+
+export function createDefinition(body: WorkflowDefinitionCreate): Promise<WorkflowDefinition> {
+  return request('/definitions/', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function replaceDefinition(id: string, body: WorkflowDefinitionCreate): Promise<WorkflowDefinition> {
+  return request(`/definitions/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+}
+
+export function deleteDefinition(id: string): Promise<void> {
+  return request(`/definitions/${id}`, { method: 'DELETE' })
+}
+
+export function runDefinition(id: string, input: Record<string, unknown>): Promise<Workflow> {
+  return request(`/definitions/${id}/runs`, { method: 'POST', body: JSON.stringify({ input }) })
+}
+
+export function listDefinitionRuns(id: string, limit = 20, offset = 0): Promise<Workflow[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  return request(`/definitions/${id}/runs?${params.toString()}`)
 }

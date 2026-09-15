@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState, type FormEvent } from 'react'
+import { useCallback, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ApiError, createWorkflow } from '../lib/apiClient'
+import { ApiError, createDefinition, replaceDefinition } from '../lib/apiClient'
 import { defaultPayloadFor, useTaskTypeCatalog } from '../lib/taskTypeCatalog'
+import type { WorkflowDefinition } from '../lib/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { Input, Label } from '../components/Field'
@@ -12,22 +13,25 @@ import { StepPropertiesPanel } from '../features/workflows/StepPropertiesPanel'
 import { TaskTypePalette } from '../features/workflows/TaskTypePalette'
 import { WorkflowBuilderCanvas } from '../features/workflows/WorkflowBuilderCanvas'
 import { useStepsEditor } from '../features/workflows/useStepsEditor'
-import { toStepCreates, uniqueStepKey } from '../features/workflows/WorkflowStepsEditor'
+import { fromStepCreates, toStepCreates, uniqueStepKey } from '../features/workflows/WorkflowStepsEditor'
 import { issuesByUid, validateGraph } from '../features/workflows/validateGraph'
-import { useMemo } from 'react'
 
-export function WorkflowBuilder() {
+/**
+ * 定義的畫布編輯器。沒給 definition = 新建（POST），有給 = 編輯（PUT 整份取代）。
+ * 編輯既有定義的頁面要用 key={definition.id} 掛載，確保切換定義時狀態會重建。
+ */
+export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinition }) {
     useWideLayout()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const { push } = useToast()
     const { data: taskTypes } = useTaskTypeCatalog()
+    const isEdit = definition != null
 
-    const [name, setName] = useState('')
+    const [name, setName] = useState(definition?.name ?? '')
     const [selectedUid, setSelectedUid] = useState<string | null>(null)
-    // 空白畫布起手，所有節點都有明確的落點，不需要初始自動排版
     const { steps, updateStep, addStepOfType, removeStep, connectSteps, disconnectSteps } =
-        useStepsEditor(() => [])
+        useStepsEditor(() => (definition ? fromStepCreates(definition.steps) : []))
 
     const selectedStep = steps.find((s) => s.uid === selectedUid) ?? null
 
@@ -57,32 +61,46 @@ export function WorkflowBuilder() {
     )
 
     const mutation = useMutation({
-        mutationFn: createWorkflow,
-        onSuccess: (workflow) => {
-            queryClient.invalidateQueries({ queryKey: ['workflows'] })
-            push('Workflow created', 'success')
-            navigate(`/workflows/${workflow.id}`)
+        mutationFn: () => {
+            const body = {
+                name,
+                steps: toStepCreates(steps),
+                // input_schema / description 的編輯器還沒做（B4），編輯時原樣帶回去，
+                // 否則 PUT 整份取代會把它們清掉
+                input_schema: definition?.input_schema ?? [],
+                description: definition?.description ?? null,
+            }
+            return isEdit ? replaceDefinition(definition.id, body) : createDefinition(body)
+        },
+        onSuccess: (saved) => {
+            queryClient.invalidateQueries({ queryKey: ['definitions'] })
+            queryClient.invalidateQueries({ queryKey: ['definition', saved.id] })
+            push(isEdit ? `Saved (v${saved.version})` : 'Workflow created', 'success')
+            navigate(`/definitions/${saved.id}`)
         },
         onError: (err) => {
-            push(err instanceof ApiError ? err.message : 'Failed to create workflow', 'error')
+            push(err instanceof ApiError ? err.message : 'Failed to save workflow', 'error')
         },
     })
 
     function onSubmit(e: FormEvent) {
         e.preventDefault()
-        mutation.mutate({ name, steps: toStepCreates(steps) })
+        mutation.mutate()
     }
 
     const canSubmit = name.trim() !== '' && steps.length > 0 && issues.length === 0
+    const backTo = isEdit ? `/definitions/${definition.id}` : '/workflows'
 
     return (
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <div className="flex flex-wrap items-end justify-between gap-4">
                 <div>
-                    <Link to="/workflows" className="text-sm text-ink-muted hover:text-ink">
-                        ← Workflows
+                    <Link to={backTo} className="text-sm text-ink-muted hover:text-ink">
+                        ← {isEdit ? definition.name : 'Workflows'}
                     </Link>
-                    <h1 className="mt-1 text-lg font-semibold text-ink">New workflow</h1>
+                    <h1 className="mt-1 text-lg font-semibold text-ink">
+                        {isEdit ? `Edit workflow · v${definition.version}` : 'New workflow'}
+                    </h1>
                 </div>
                 <div className="flex items-end gap-3">
                     <div>
@@ -96,7 +114,7 @@ export function WorkflowBuilder() {
                         />
                     </div>
                     <Button variant="primary" type="submit" disabled={mutation.isPending || !canSubmit}>
-                        {mutation.isPending ? 'Creating…' : 'Create workflow'}
+                        {mutation.isPending ? 'Saving…' : isEdit ? 'Save changes' : 'Create workflow'}
                     </Button>
                 </div>
             </div>
@@ -104,7 +122,7 @@ export function WorkflowBuilder() {
             {issues.length > 0 && (
                 <div className="rounded-lg border border-status-critical/40 bg-status-critical/5 px-4 py-3">
                     <p className="text-sm font-medium text-status-critical">
-                        {issues.length} 個問題需要修正才能建立
+                        {issues.length} 個問題需要修正才能儲存
                     </p>
                     <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-status-critical">
                         {issues.map((issue, i) => (
@@ -140,6 +158,7 @@ export function WorkflowBuilder() {
                             onAddStep={addStep}
                             onDuplicateStep={duplicateStep}
                             issues={issueMap}
+                            autoLayoutOnLoad={isEdit}
                             onRemoveStep={(uid) => {
                                 removeStep(uid)
                                 setSelectedUid((cur) => (cur === uid ? null : cur))

@@ -34,6 +34,8 @@ interface Props {
     onConnectSteps: (source: string, target: string, branchWhen: 'true' | 'false' | null) => void
     onDisconnectSteps: (source: string, target: string) => void
     onInvalid: (message: string) => void
+    /** 載入既有定義時為 true：第一次拿到 steps 就自動排版一次（新建的空白畫布不需要） */
+    autoLayoutOnLoad?: boolean
 }
 
 /** 使用者正在打字時不該觸發畫布快捷鍵。CodeMirror 的編輯區不是 textarea，要另外判斷。 */
@@ -56,6 +58,7 @@ function BuilderCanvas({
     onConnectSteps,
     onDisconnectSteps,
     onInvalid,
+    autoLayoutOnLoad
 }: Props) {
     const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([])
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -65,12 +68,18 @@ function BuilderCanvas({
     const { screenToFlowPosition, fitView } = useReactFlow()
     const pendingPositions = useRef(new Map<string, XYPosition>())
     const { theme } = useTheme()
+    const didInitialLayout = useRef(false);
 
     useEffect(() => {
         const graph = toFlow(stepsFromDrafts(steps))
+        // 判斷放在 updater 外面：StrictMode 會把 updater 呼叫兩次，
+        // 在裡面改 ref 的話第二次會看到 true、回傳沒排版的結果
+        const layoutNow = autoLayoutOnLoad && !didInitialLayout.current && steps.length > 0
+        if (layoutNow) didInitialLayout.current = true
+
         setNodes((prev) => {
             const prevById = new Map(prev.map((n) => [n.id, n]))
-            return graph.nodes.map((n, i) => {
+            const next = graph.nodes.map((n, i) => {
                 const pending = pendingPositions.current.get(n.id)
                 if (pending) pendingPositions.current.delete(n.id)
                 return {
@@ -79,7 +88,11 @@ function BuilderCanvas({
                     data: { ...n.data, selected: n.id === selectedUid, issues: issues.get(n.id) ?? [] },
                 }
             })
+            return layoutNow ? autoLayout(next, graph.edges) : next
         })
+        if (layoutNow) window.setTimeout(() => fitView({ padding: 0.18, maxZoom: 1 }), 0)
+
+
         setEdges(
             graph.edges.map((e) =>
                 e.id === selectedEdgeId
@@ -94,7 +107,7 @@ function BuilderCanvas({
                     : e,
             ),
         )
-    }, [steps, selectedUid, selectedEdgeId, issues, setNodes, setEdges])
+    }, [steps, selectedUid, selectedEdgeId, issues, setNodes, setEdges, autoLayout, fitView])
 
     const selectNode = useCallback(
         (uid: string | null) => {
