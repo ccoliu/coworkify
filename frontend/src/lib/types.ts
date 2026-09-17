@@ -151,18 +151,24 @@ export interface WorkflowSchedule {
   id: string
   name: string
   cron_expression: string
+  // 新排程指向一個定義；舊排程是 null，改帶自己的 steps 快照
+  definition_id: string | null
+  input: Record<string, unknown> | null
   steps: WorkflowStepCreate[]
   enabled: boolean
   next_run_at: string | null
   last_run_at: string | null
   created_at: string
   updated_at: string
+  definition_name: string | null
+  definition_version: string | null
 }
 
 export interface WorkflowScheduleCreate {
   name: string
   cron_expression: string
-  steps: WorkflowStepCreate[]
+  definition_id: string
+  input: Record<string, unknown>
   enabled: boolean
 }
 
@@ -175,7 +181,7 @@ export interface PromoteWorkflowToSchedule {
 export interface WorkflowScheduleUpdate {
   name?: string
   cron_expression?: string
-  steps?: WorkflowStepCreate[]
+  input?: Record<string, unknown>
   enabled?: boolean
 }
 

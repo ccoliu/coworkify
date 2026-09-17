@@ -70,7 +70,7 @@ export function DefinitionTable({
                                     <Button
                                         variant="danger"
                                         onClick={() => {
-                                            if (confirm(`Delete workflow "${d.name}"? Its past runs are kept.`)) onDelete(d.id)
+                                            if (confirm(`Delete workflow "${d.name}"? Its schedules are removed too; past runs are kept.`)) onDelete(d.id)
                                         }}
                                     >
                                         Delete

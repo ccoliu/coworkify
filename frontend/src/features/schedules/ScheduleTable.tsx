@@ -7,6 +7,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { useToast } from '../../context/ToastContext'
 import { useState } from 'react'
 import { EditScheduleModal } from './EditScheduleModal'
+import { Link } from 'react-router-dom'
 
 export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) {
     const queryClient = useQueryClient()
@@ -45,7 +46,7 @@ export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) 
                         <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-ink-muted">
                             <th className="px-4 py-2.5 font-medium">Name</th>
                             <th className="px-4 py-2.5 font-medium">Cron</th>
-                            <th className="px-4 py-2.5 font-medium">Steps</th>
+                            <th className="px-4 py-2.5 font-medium">Workflow</th>
                             <th className="px-4 py-2.5 font-medium">Next run</th>
                             <th className="px-4 py-2.5 font-medium">Last run</th>
                             <th className="px-4 py-2.5 font-medium">Enabled</th>
@@ -59,8 +60,26 @@ export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) 
                                     <div className="font-medium text-ink">{sched.name}</div>
                                     <div className="font-mono text-xs text-ink-muted">{shortId(sched.id)}</div>
                                 </td>
-                                <td className="px-4 py-3 font-mono text-xs text-ink-secondary">{sched.cron_expression}</td>
-                                <td className="px-4 py-3 text-ink-secondary">{sched.steps.length}</td>
+                                <td className="px-4 py-3">
+                                    {sched.definition_id ? (
+                                        <Link
+                                            to={`/definitions/${sched.definition_id}`}
+                                            className="text-ink hover:text-accent"
+                                        >
+                                            {sched.definition_name ?? 'workflow'}
+                                            {sched.definition_version != null && (
+                                                <span className="text-ink-muted"> v{sched.definition_version}</span>
+                                            )}
+                                        </Link>
+                                    ) : (
+                                        <span
+                                            className="text-xs text-ink-muted"
+                                            title="舊排程：自己帶著一份步驟快照，不能編輯。建議刪掉後重建。"
+                                        >
+                                            legacy · {sched.steps?.length ?? 0} steps
+                                        </span>
+                                    )}
+                                </td>
                                 <td className="px-4 py-3 text-ink-muted">
                                     {sched.next_run_at ? formatRelativeTime(sched.next_run_at) : '—'}
                                 </td>
@@ -76,9 +95,11 @@ export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) 
                                     </button>
                                 </td>
                                 <td className="px-4 py-3 text-right">
-                                    <Button variant="ghost" onClick={() => setEditing(sched)}>
-                                        Edit
-                                    </Button>
+                                    {sched.definition_id && (
+                                        <Button variant="ghost" onClick={() => setEditing(sched)}>
+                                            Edit
+                                        </Button>
+                                    )}
                                     <Button
                                         variant="ghost"
                                         className="text-status-critical hover:text-status-critical"

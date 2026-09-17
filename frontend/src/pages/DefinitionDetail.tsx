@@ -10,36 +10,14 @@ import {
     runDefinition,
 } from '../lib/apiClient'
 import { formatDateTime } from '../lib/format'
-import type { TaskFieldSpec } from '../lib/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
-import { TaskPayloadFields } from '../features/tasks/TaskPayloadFields'
 import { WorkflowTable } from '../features/workflows/WorkflowTable'
 import { useToast } from '../context/ToastContext'
+import { initialInput, missingRequired, RunInputFields } from '../features/workflows/runInput'
 
-/** run 表單的初始值：有 default 用 default，select 沒 default 就先選第一個，免得畫面顯示第一項但值是 null。 */
-function initialInput(schema: TaskFieldSpec[]): Record<string, unknown> {
-    return Object.fromEntries(
-        schema.map((f) => {
-            if (f.default !== null && f.default !== undefined) return [f.key, f.default]
-            if (f.kind === 'select') return [f.key, f.options?.[0]?.value ?? null]
-            if (f.kind === 'multiselect') return [f.key, []]
-            if (f.kind === 'boolean') return [f.key, false]
-            return [f.key, null]
-        })
-    )
-}
-
-function missingRequired(schema: TaskFieldSpec[], input: Record<string, unknown>): string[] {
-    return schema
-        .filter((f) => {
-            const v = input[f.key]
-            return f.required && (v == null || v === '' || (Array.isArray(v) && v.length === 0))
-        })
-        .map((f) => f.label)
-}
 
 export function DefinitionDetail() {
     const { id } = useParams<{ id: string }>()
@@ -155,7 +133,7 @@ export function DefinitionDetail() {
                     <Button
                         variant="danger"
                         onClick={() => {
-                            if (confirm(`Delete workflow "${definition.name}"? Its past runs are kept.`)) {
+                            if (confirm(`Delete workflow "${definition.name}"? Its schedules are removed too; past runs are kept.`)) {
                                 remove.mutate(definition.id)
                             }
                         }}
@@ -170,10 +148,10 @@ export function DefinitionDetail() {
                     <form onSubmit={onRun} className="flex flex-col gap-4">
                         <h2 className="text-sm font-semibold text-ink">Run</h2>
                         {schema.length > 0 ? (
-                            <TaskPayloadFields
+                            <RunInputFields
                                 idPrefix={`run-${definition.id}`}
-                                fields={schema}
-                                payload={values}
+                                schema={schema}
+                                values={values}
                                 onChange={setInput}
                             />
                         ) : (
