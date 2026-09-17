@@ -197,6 +197,29 @@ def resolve_condition_left(db, step: WorkflowStep, payload: dict) -> dict:
         result = result["value"]
     return {**payload, "left": result}
 
+def collect_upstream_inputs(db, step: WorkflowStep, all_steps: list[WorkflowStep]) -> dict:
+    """
+    python step 的 main(inputs) 參數：直接上游的 {step_key: result}。
+
+    上游是 python 時取 result["value"]（使用者 main() 真正回傳的東西），其餘取整包
+    result——跟 resolve_condition_left 自動帶入 left 的規則一致。for_each 展開出來的
+    task 沒有 step_key（會有歧義），退回用 task id 當 key。
+    """
+    if not step.depends_on:
+        return {}
+
+    dep_ids = list(step.depends_on)
+    results = collect_step_results(db, dep_ids)
+    key_by_task = {str(s.task_id): s.step_key for s in all_steps}
+    
+    inputs = {}
+    for task_id, result in zip(dep_ids, results):
+        task = db.get(Task, uuid.UUID(task_id))
+        if task and task.task_type == "python" and isinstance(result, dict) and "value" in result:
+            result = result["value"]
+        inputs[key_by_task.get(task_id) or task_id] = result
+    return inputs
+
 
 def _condition_result(db, task_id) -> bool | None:
     """condition task 最新一筆成功結果的 passed 欄位；不是 condition 或還沒有結果就回 None。"""
@@ -265,6 +288,15 @@ def advance_workflow(db, task: Task):
                         next_task.payload = render_step_refs(
                             next_task.payload, collect_results_by_key(db, workflow.id)
                         )
+                        db.commit()
+
+                    if next_task.task_type == "python":
+                        # 上游資料走 payload.inputs（handler 會寫成 sandbox 裡的
+                        # inputs.json），不再靠字串模板貼進原始碼
+                        next_task.payload = {
+                            **next_task.payload,
+                            "inputs": collect_upstream_inputs(db, s, all_steps),
+                        }
                         db.commit()
 
                     if next_task.task_type == "condition":

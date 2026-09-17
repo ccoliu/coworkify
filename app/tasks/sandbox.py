@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,10 @@ try:
     import resource
 except ImportError:  # pragma: no cover - resource is POSIX-only
     resource = None  # type: ignore[assignment]
+
+# 上游資料寫進 sandbox 暫存目錄的檔名；driver 會從 script.py 的同一層讀它
+INPUTS_FILENAME = "inputs.json"
+SCRIPT_FILENAME = "script.py"
 
 MAX_TIMEOUT_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 10
@@ -129,7 +134,20 @@ def run_sandboxed(build_args, *, shell: bool, timeout_seconds: Any) -> dict[str,
     return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
 
 
-def python_command(code: str, tmpdir: str) -> list[str]:
-    script_path = Path(tmpdir) / "script.py"
-    script_path.write_text(code, encoding="utf-8")
-    return [sys.executable, "-I", str(script_path)]
+def python_command(code: str, tmpdir: str, *, runner: str, inputs: Any = None) -> list[str]:
+    """
+    使用者程式碼寫成 script.py，由 runner 另外載入執行——刻意分成兩個檔案，
+    使用者程式碼裡不會混進任何我們加的行，traceback 的行號才跟編輯器一致。
+    """
+    base = Path(tmpdir)
+    (base / SCRIPT_FILENAME).write_text(code, encoding="utf-8")
+    # 上游資料走檔案，不貼進原始碼——貼字串會毀掉型別（JSON 的 true/false/null
+    # 不是合法的 Python 名稱），而且輸入來自表單時等於開了一個程式碼注入的洞。
+    if inputs is not None:
+        (base / INPUTS_FILENAME).write_text(
+            json.dumps(inputs, ensure_ascii=False), encoding="utf-8"
+        )
+
+    runner_path = base / "_coworkify_runner.py"
+    runner_path.write_text(runner, encoding="utf-8")
+    return [sys.executable, "-I", str(runner_path)]

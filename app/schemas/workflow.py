@@ -193,7 +193,7 @@ class StepsGraph(BaseModel):
 
         return self
 
-class WorkflowCreate(BaseModel):
+class WorkflowCreate(StepsGraph):
     name: str = Field(..., max_length=255)
     
 

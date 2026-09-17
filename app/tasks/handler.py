@@ -12,7 +12,7 @@ import socket
 from urllib.parse import urlparse
 import requests
 
-from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed
+from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME
 
 #define business logics
 
@@ -83,18 +83,51 @@ _PY_RESULT_MARKER = "__COWORKIFY_RESULT__"
 # 附加在使用者程式碼後面的驅動程式碼：如果使用者定義了一個叫 main 的函式，
 # 就呼叫它、把回傳值序列化成 JSON 印到一行特殊標記後面。沒有 main 的話這段
 # if 判斷式在執行期就是 False，完全不影響原本的程式（含它自己的 print 輸出）。
-# 這樣使用者不用自己 print(json.dumps(...))，寫一個回傳 True/False（或任何
-# JSON 可序列化值）的 main() 就好，結果會出現在 task 結果的 "value" 欄位。
-_PY_DRIVER = f"""
+#
+# main 有帶參數時，會把上游步驟的結果（{step_key: result}）讀進來傳給它；
+# 沒帶參數的 main() 照舊直接呼叫，所以既有的程式碼不受影響。
+# 真正被執行的入口：載入使用者的 script.py，再把 main() 的回傳值序列化成 JSON，
+# 印在一行特殊標記後面。沒有 main 的話什麼都不做，使用者自己的 print 輸出不受影響。
+#
+# 上游步驟的結果（{step_key: result}）有兩種取用方式，兩種都可以：
+#   - 直接用全域的 inputs（含 main() 裡面，以及模組層級的程式碼）
+#   - 把 main 宣告成帶一個參數，例如 main(inputs)
+_PY_RUNNER = f"""
+import inspect
+import json
+import os
+import runpy
 
-if 'main' in dir() and callable(main):
-    import json as __coworkify_json
-    __coworkify_result = main()
+_dir = os.path.dirname(os.path.abspath(__file__))
+
+try:
+    with open(os.path.join(_dir, {INPUTS_FILENAME!r}), encoding="utf-8") as _f:
+        inputs = json.load(_f)
+except FileNotFoundError:
+    # 沒有上游（根節點）或不在 workflow 裡時就是空的
+    inputs = {{}}
+
+# init_globals 讓 inputs 成為使用者程式碼裡的全域名稱；run_name 讓
+# `if __name__ == "__main__":` 這種寫法照常成立。
+_globals = runpy.run_path(
+    os.path.join(_dir, {SCRIPT_FILENAME!r}),
+    init_globals={{"inputs": inputs}},
+    run_name="__main__",
+)
+
+_main = _globals.get("main")
+if callable(_main):
     try:
-        __coworkify_serialized = __coworkify_json.dumps(__coworkify_result)
+        _wants_inputs = len(inspect.signature(_main).parameters) > 0
     except (TypeError, ValueError):
-        __coworkify_serialized = __coworkify_json.dumps(str(__coworkify_result))
-    print({_PY_RESULT_MARKER!r} + __coworkify_serialized)
+        _wants_inputs = False
+
+    _result = _main(inputs) if _wants_inputs else _main()
+    try:
+        _serialized = json.dumps(_result)
+    except (TypeError, ValueError):
+        _serialized = json.dumps(str(_result))
+    print({_PY_RESULT_MARKER!r} + _serialized)
 """
 
 
@@ -105,13 +138,18 @@ def handle_python(payload: Dict[str, Any]) -> Dict[str, Any]:
     如果程式碼定義了 main()，它的回傳值會被自動抓出來放進結果的 "value" 欄位
     （JSON 序列化過，所以下游可以用 '{{steps.<key>.result.value}}' 拿到真正
     型別的值，不用自己 print() 再從 stdout 字串裡解析）。
+
+    main 可以宣告一個參數，例如 main(inputs)——executor 會把直接上游的結果
+    以 {{step_key: result}} 的形式傳進來（見 executor.collect_upstream_inputs）。
     """
     code = payload.get("code")
     if not code:
         raise ValueError("payload.code is required for python task")
 
     result = run_sandboxed(
-        lambda tmpdir: python_command(code + _PY_DRIVER, tmpdir),
+        lambda tmpdir: python_command(
+            code, tmpdir, runner=_PY_RUNNER, inputs=payload.get("inputs")
+        ),
         shell=False,
         timeout_seconds=payload.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
     )

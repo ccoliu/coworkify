@@ -67,7 +67,9 @@ TASK_TYPE_CATALOG = [
         "task_type": "python",
         "label": "Python",
         "description": "在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 main()，"
-                       "它的回傳值會自動變成結果的 result.value（不用自己 print）。",
+                       "它的回傳值會自動變成結果的 result.value（不用自己 print）。"
+                       "上游步驟的結果放在全域變數 inputs 裡（{step_key: 上游結果} 的 dict，型別完整保留），"
+                       "寫成 main(inputs) 也可以；不需要（也不建議）在程式碼裡用 '{{steps...}}' 模板。",
         "fields": [
             {
                 "key": "code",
