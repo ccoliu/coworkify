@@ -72,6 +72,16 @@ export const TASK_STATUSES: TaskStatus[] = [
   'cancelled',
 ]
 
+export interface TaskLog {
+  id: string
+  status: TaskStatus
+  result: unknown
+  error_message: string | null
+  execution_time_ms: number | null
+  worker_id: string | null,
+  created_at: string
+}
+
 export interface WsTaskUpdate {
   task_id: string
   status: TaskStatus

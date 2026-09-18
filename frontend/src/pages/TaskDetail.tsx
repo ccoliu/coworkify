@@ -8,9 +8,8 @@ import { Card } from '../components/Card'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
 import { StatusBadge } from '../components/StatusBadge'
-import { useWs } from '../context/WsContext'
 import { useToast } from '../context/ToastContext'
-import { JsonBlock } from '../components/JsonBlock'
+import { TaskLogList } from '../features/tasks/TaskLogList'
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -26,7 +25,6 @@ export function TaskDetail() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { push } = useToast()
-  const { events } = useWs()
 
   const {
     data: task,
@@ -49,8 +47,6 @@ export function TaskDetail() {
       push(err instanceof ApiError ? err.message : 'Failed to delete task', 'error')
     },
   })
-
-  const timeline = events.filter((e) => e.task_id === id)
 
   if (isLoading) {
     return (
@@ -120,31 +116,8 @@ export function TaskDetail() {
       </Card>
 
       <Card className="p-5">
-        <h2 className="mb-3 text-sm font-semibold text-ink">Live activity</h2>
-        {timeline.length === 0 ? (
-          <p className="text-sm text-ink-muted">
-            No live events observed yet for this task in this session.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {timeline.map((event, i) => (
-              <li key={i} className="flex items-start gap-3 text-sm">
-                <StatusBadge status={event.status} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs text-ink-muted">
-                    {new Date(event.timestamp * 1000).toLocaleTimeString()}
-                  </div>
-                  {event.error && (
-                    <div className="mt-0.5 text-xs text-status-critical">{event.error}</div>
-                  )}
-                  {event.result != null && (
-                    <JsonBlock value={event.result} />
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <h2 className="mb-3 text-sm font-semibold text-ink">Execution history</h2>
+        <TaskLogList taskId={task.id} />
       </Card>
     </div>
   )

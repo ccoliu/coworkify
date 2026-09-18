@@ -2,11 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '../../components/StatusBadge'
 import { Spinner } from '../../components/Spinner'
-import { useWs } from '../../context/WsContext'
 import { getTask } from '../../lib/apiClient'
 import { formatDateTime } from '../../lib/format'
 import type { WorkflowStep } from '../../lib/types'
 import { JsonBlock } from '../../components/JsonBlock'
+import { TaskLogList } from '../tasks/TaskLogList'
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
     return (
@@ -22,10 +22,6 @@ export function StepDetailPanel({ step, onClose }: { step: WorkflowStep; onClose
         queryKey: ['task', step.task_id],
         queryFn: () => getTask(step.task_id),
     })
-    const { events } = useWs()
-    // task_logs 目前沒有對外的 endpoint，先拿 WS 這一輪推播過的錯誤訊息頂著；
-    // 要看完整重試歷程還是得進 TaskDetail。
-    const liveError = events.find((e) => e.task_id === step.task_id && e.error)?.error ?? null
 
     return (
         <aside className="flex w-full shrink-0 flex-col border-t border-border bg-surface lg:w-80 lg:border-l lg:border-t-0">
@@ -62,15 +58,16 @@ export function StepDetailPanel({ step, onClose }: { step: WorkflowStep; onClose
                         <Row label="Updated" value={formatDateTime(task.updated_at)} />
                         <div className="mt-2">
                             <p className="mb-1 text-xs uppercase tracking-wide text-ink-muted">Payload</p>
-                            <JsonBlock value={task.payload} className="max-h-60 p-2" />                        </div>
-                    </>
-                )}
+                            <JsonBlock value={task.payload} className="max-h-60 p-2" />
+                        </div>
 
-                {liveError && (
-                    <div className="mt-2">
-                        <p className="mb-1 text-xs uppercase tracking-wide text-status-critical">Last error</p>
-                        <p className="rounded-md bg-plane p-2 text-xs text-status-critical">{liveError}</p>
-                    </div>
+                        <div className="mt-3">
+                            <p className="mb-1.5 text-xs uppercase tracking-wide text-ink-muted">
+                                Execution history
+                            </p>
+                            <TaskLogList taskId={step.task_id} compact />
+                        </div>
+                    </>
                 )}
             </div>
 

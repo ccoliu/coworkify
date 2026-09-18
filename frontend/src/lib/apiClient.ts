@@ -6,6 +6,7 @@ import type {
   TaskCreate,
   TaskListFilters,
   TaskTypeSpec,
+  TaskLog,
   User,
   Workflow,
   WorkflowCreate,
@@ -115,6 +116,10 @@ export function getTask(id: string): Promise<Task> {
   return request(`/tasks/${id}`)
 }
 
+export function listTaskLogs(id: string, limit = 50): Promise<TaskLog[]> {
+  return request(`/tasks/${id}/logs?limit=${limit}`)
+}
+
 export function listTaskTypes(): Promise<TaskTypeSpec[]> {
   return request('/tasks/types')
 }
@@ -208,3 +213,4 @@ export function listDefinitionRuns(id: string, limit = 20, offset = 0): Promise<
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   return request(`/definitions/${id}/runs?${params.toString()}`)
 }
+
