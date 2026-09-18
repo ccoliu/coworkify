@@ -9,8 +9,13 @@ export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { w
     if (workflows.length === 0) {
         return (
             <EmptyState
-                title="No workflows yet"
-                description="Create a workflow to chain multiple tasks together with dependencies."
+                title="No runs yet"
+                description="每一次執行都會列在這裡，包含排程自動觸發的。"
+                action={
+                    <Link to="/getting-started" className="text-sm font-medium text-accent hover:underline">
+                        看 Getting started →
+                    </Link>
+                }
             />
         )
     }

@@ -14,6 +14,7 @@ import { WorkflowCanvas } from '../features/workflows/WorkflowCanvas'
 import { useToast } from '../context/ToastContext'
 import { useWs } from '../context/WsContext'
 import { useWideLayout } from '../context/LayoutContext'
+import { JsonBlock } from '../components/JsonBlock'
 
 export function WorkflowDetail() {
     const { id } = useParams<{ id: string }>()
@@ -195,9 +196,7 @@ export function WorkflowDetail() {
             {workflow.input && Object.keys(workflow.input).length > 0 && (
                 <Card className="p-5">
                     <h2 className="mb-3 text-sm font-semibold text-ink">Input</h2>
-                    <pre className="max-h-64 overflow-auto rounded-lg bg-plane p-3 font-mono text-xs text-ink-secondary">
-                        {JSON.stringify(workflow.input, null, 2)}
-                    </pre>
+                    <JsonBlock value={workflow.input} />
                 </Card>
             )}
 
@@ -223,9 +222,7 @@ export function WorkflowDetail() {
                         {Object.entries(workflow.result).map(([key, value]) => (
                             <div key={key}>
                                 <p className="mb-1 font-mono text-xs text-ink-muted">{key}</p>
-                                <pre className="max-h-64 overflow-auto rounded-lg bg-plane p-3 font-mono text-xs text-ink-secondary">
-                                    {JSON.stringify(value, null, 2)}
-                                </pre>
+                                <JsonBlock value={value} />
                             </div>
                         ))}
                     </div>

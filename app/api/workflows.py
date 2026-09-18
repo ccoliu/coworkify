@@ -79,21 +79,21 @@ def promote_workflow_to_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """把一個已經建立過的 workflow 註冊成週期性排程，直接沿用它當初的 step 樣板。"""
+    """把這次 run 變成週期性排程：指向它所屬的定義，並沿用同一份輸入。"""
     workflow = db.get(Workflow, workflow_id)
     if not workflow:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
-    if not workflow.steps_template:
+    if not workflow.definition_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This workflow has no stored step template (it was created before this feature existed) "
-            "— recreate it via POST /workflows/ to enable scheduling.",
+            detail="This run doesn't belong to a saved workflow — open the workflow itself to schedule it.",
         )
 
     schedule = WorkflowSchedule(
         name=payload.name,
         cron_expression=payload.cron_expression,
-        steps=workflow.steps_template,
+        definition_id=workflow.definition_id,
+        input=workflow.input,
         enabled=payload.enabled,
         created_by=current_user.id,
         next_run_at=compute_next_run(payload.cron_expression, datetime.utcnow()),

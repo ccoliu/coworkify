@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, deleteDefinition, deleteWorkflow, listDefinitions, listWorkflows, rerunWorkflow } from '../lib/apiClient'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -70,7 +70,10 @@ export function Workflows() {
                     <h1 className="text-lg font-semibold text-ink">Workflows</h1>
                     <p className="text-sm text-ink-muted">
                         Define a pipeline once, then run it with different input. Downstream steps run automatically
-                        once their dependencies succeed.
+                        once their dependencies succeed.{' '}
+                        <Link to="/getting-started" className="text-accent hover:underline">
+                            第一次使用？看 Getting started
+                        </Link>
                     </p>
                 </div>
                 <Button variant="primary" onClick={() => navigate('/workflows/new')}>

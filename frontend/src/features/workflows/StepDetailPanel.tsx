@@ -6,6 +6,7 @@ import { useWs } from '../../context/WsContext'
 import { getTask } from '../../lib/apiClient'
 import { formatDateTime } from '../../lib/format'
 import type { WorkflowStep } from '../../lib/types'
+import { JsonBlock } from '../../components/JsonBlock'
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
     return (
@@ -61,10 +62,7 @@ export function StepDetailPanel({ step, onClose }: { step: WorkflowStep; onClose
                         <Row label="Updated" value={formatDateTime(task.updated_at)} />
                         <div className="mt-2">
                             <p className="mb-1 text-xs uppercase tracking-wide text-ink-muted">Payload</p>
-                            <pre className="max-h-60 overflow-auto rounded-md bg-plane p-2 font-mono text-xs text-ink-secondary">
-                                {JSON.stringify(task.payload, null, 2)}
-                            </pre>
-                        </div>
+                            <JsonBlock value={task.payload} className="max-h-60 p-2" />                        </div>
                     </>
                 )}
 

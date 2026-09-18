@@ -1,9 +1,12 @@
+import type { TaskFieldSpec } from "../../lib/types";
 import { effectiveDependsOn, type StepDraft } from "./WorkflowStepsEditor";
 
 export interface StepIssue {
     /** null 代表整體性問題，不屬於任何節點 */
     uid: string | null
     message: string
+    /** warning 不擋存檔，只是提醒；沒寫就是 error */
+    severity?: 'error' | 'warning'
 }
 
 // 以下規則逐條鏡射 app/schemas/workflow.py 的 WorkflowCreate.validate_dag
@@ -21,6 +24,7 @@ function referencedKeys(payload: Record<string, unknown>): string[] {
 export function validateGraph(steps: StepDraft[]): StepIssue[] {
     const issues: StepIssue[] = []
     const add = (uid: string | null, message: string) => { issues.push({ uid, message }) }
+    const warn = (uid: string | null, message: string) => { issues.push({ uid, message, severity: 'warning' }) }
 
     if (steps.length === 0) {
         add(null, '至少要有一個 step')
@@ -122,6 +126,16 @@ export function validateGraph(steps: StepDraft[]): StepIssue[] {
                 }
             }
         }
+
+        // python 已經改用全域 inputs 取上游結果（見 app/tasks/handler.py 的 _PY_RUNNER）。
+        // 模板還是會被解析，所以不擋，但字串插值會毀掉型別，值來自表單時還是注入風險。
+        if (
+            step.taskType === 'python' &&
+            typeof step.payload.code === 'string' &&
+            step.payload.code.includes('{{steps.')
+        ) {
+            warn(step.uid, 'python 程式碼不需要 {{steps...}}：上游結果放在全域變數 inputs 裡，或寫成 main(inputs)')
+        }
     }
 
     // 循環依賴：跟後端同樣是三色 DFS，但把所有涉及的節點都收集起來而不是拋第一個。
@@ -160,4 +174,29 @@ export function issuesByUid(issues: StepIssue[]): Map<string, string[]> {
         map.set(issue.uid, [...(map.get(issue.uid) ?? []), issue.message])
     }
     return map
+}
+
+/** 鏡射 app/schemas/definition.py 的 InputFieldSpec + validate_input_schema。 */
+export function validateInputSchema(schema: TaskFieldSpec[], steps: StepDraft[]): StepIssue[] {
+    const issues: StepIssue[] = []
+    const add = (message: string) => { issues.push({ uid: null, message }) }
+
+    const counts = new Map<string, number>()
+    for (const f of schema) counts.set(f.key, (counts.get(f.key) ?? 0) + 1)
+
+    for (const f of schema) {
+        // key 會出現在 '{{steps.<input step>.result.<key>}}' 的路徑裡，規則跟 step key 一樣
+        if (!STEP_KEY_RE.test(f.key)) add(`輸入欄位 key「${f.key}」只能用英數字與底線`)
+        else if ((counts.get(f.key) ?? 0) > 1) add(`輸入欄位 key「${f.key}」已重複`)
+        if (!f.label.trim()) add(`輸入欄位「${f.key}」缺少顯示名稱`)
+        if ((f.kind === 'select' || f.kind === 'multiselect') && !f.options?.length) {
+            add(`輸入欄位「${f.key}」是選項型，至少要有一個選項`)
+        }
+    }
+
+    if (schema.length > 0 && !steps.some((s) => s.taskType === 'input')) {
+        add('有輸入欄位就需要一個 input step——run 填的值會從那一步進入 workflow')
+    }
+
+    return issues
 }

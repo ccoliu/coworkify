@@ -23,9 +23,12 @@
 - **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
 - **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
 - **視覺化 Workflow 編輯器**：在畫布上拖拉節點、拉線就是依賴關係，`condition` 節點的 `true` / `false` 出口直接對應 if/else 分支；前端即時鏡射後端的 DAG 驗證規則，問題標在節點上並擋住送出。
-- **明確的輸入與輸出**：`input` 節點是整條 workflow 的資料入口，下游用 `{{steps.<key>.result.<欄位>}}` 取用；跑完後所有終端節點的結果會收進 `workflows.result`，不用再逐一翻每個節點的執行紀錄。
-- **一鍵重跑**：workflow 建立時會保留原始 step 樣板，`POST /workflows/{id}/rerun` 沿用它再跑一次，舊那次的狀態與紀錄完整保留。
-- **Cron 週期性排程**：workflow 可綁定標準 5 欄位 cron 表達式（例如「每天 9 點」），由 Celery Beat 定期檢查、到點自動建立並派送整組 workflow，時區與應用程式設定一致。
+- **定義與執行分離**：workflow 是一條可重複使用的「產線」（`workflow_definitions`），每次執行是一筆帶著自己輸入的 run。run 會保留當下的 step 快照與定義版本號，所以之後修改定義不會改寫歷史紀錄。
+- **表單化的輸入**：定義可以宣告 `input_schema`（欄位名稱、型別、預設值、是否必填），執行前由前端自動產生表單並驗證；填入的值從 `input` 節點進入整條 workflow。
+- **型別安全的資料傳遞**：`python` 步驟以全域變數 `inputs` 取得所有上游結果（型別完整保留），`shell` 以 `$(./get_input <path>)` 取值，兩者都不經過字串插值，避免型別失真與指令注入。
+- **明確的輸出**：跑完後所有終端節點的結果會收進 `workflows.result`，不用再逐一翻每個節點的執行紀錄。
+- **重跑與續跑**：`POST /workflows/{id}/rerun` 用同一份快照與輸入建立新的一次執行；`POST /workflows/{id}/retry` 則在同一次執行上從失敗點續跑，已經成功的上游不重跑。
+- **Cron 週期性排程**：排程直接指向一條 workflow 定義並帶著自己的輸入，改了定義下次觸發就用新版；由 Celery Beat 定期檢查、到點自動建立並派送，時區與應用程式設定一致。
 - **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
@@ -41,9 +44,9 @@
 
 | 任務類型 (task_type) | 說明 |
 | :--- | :--- |
-| `input` | workflow 的資料入口。payload 帶一段 JSON，它的結果就是整條 workflow 的「原料」，下游用 `{{steps.<key>.result.<欄位>}}` 取用 |
-| `python` | 在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 `main()`，它的回傳值會自動成為結果的 `result.value` |
-| `shell` | 在受限的 subprocess 裡執行一段 shell 指令 |
+| `input` | workflow 的資料入口。執行時會被換成 Run 表單填入的值（定義沒宣告 `input_schema` 時則用 payload 裡寫死的 JSON），它的結果就是整條 workflow 的「原料」 |
+| `python` | 在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 `main()`，它的回傳值會自動成為結果的 `result.value`；上游結果放在全域變數 `inputs` 裡（也可寫成 `main(inputs)`） |
+| `shell` | 在受限的 subprocess 裡執行一段 shell 指令。上游結果放在工作目錄的 `inputs.json`，取單一值用 `$(./get_input input_1.price)` |
 | `http_request` | 發送一個 HTTP 請求，會擋掉指向內網或 cloud metadata endpoint 的目標 |
 | `condition` | 評估一個條件並回傳 `passed=true/false`，本身永遠成功；下游用 `branch_of` + `branch_when` 指向它來實現 if/else 分支 |
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
@@ -61,12 +64,13 @@
 
 ![Workflow builder](<workflow-builder.png>)
 
-`/workflows/new` 是一張以 React Flow 建成的畫布，自動排版用 dagre：
+`/workflows/new` 是一張以 React Flow 建成的畫布，自動排版用 dagre；既有定義用 `/definitions/{id}/edit` 開同一張畫布編輯（載入時自動排版），存檔是整份取代，版本號自動 +1：
 
 - **拖拉建置**：左側面板把任務類型拖進畫布就是一個節點，節點之間拉一條線就是 `depends_on`
 - **分支即連線**：`condition` 節點右側有 `true` / `false` 兩個出口，從哪個出口拉線出去，就自動設好該步驟的 `branch_of` / `branch_when`，不需要手動對應 step key
 - **屬性面板**：右側表單依 `GET /tasks/types` 的欄位規格動態產生；`python` / `shell` 的程式碼欄位是 CodeMirror 編輯器（語法高亮、自動縮排、可放大成 modal 編輯，也可以直接上傳 `.py`）
-- **即時驗證**：前端鏡射了一份後端 `validate_dag` 的規則（見 `frontend/src/features/workflows/validateGraph.ts`），問題會即時標在節點上、列在畫布上方，有錯就擋住送出。後端那份仍是最終把關，兩邊必須同步維護
+- **輸入欄位編輯器**：畫布上方可以定義這條 workflow 的 `input_schema`（key／顯示名稱／型別／預設值／必填／選項），執行與排程的表單都照它產生，形狀與 `GET /tasks/types` 的欄位規格相同
+- **即時驗證**：前端鏡射了一份後端 `validate_dag` 的規則（見 `frontend/src/features/workflows/validateGraph.ts`），問題會即時標在節點上、列在畫布上方，有錯就擋住送出。後端那份仍是最終把關，兩邊必須同步維護。另有不擋送出的黃色警告，例如 `python` 程式碼裡仍在使用 `{{steps...}}` 模板
 - **快捷鍵**：`Delete` 刪除選取的節點或連線、`Esc` 取消選取、`Ctrl+D` 複製節點、`L` 自動排版、`F` 置中
 
 Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況：節點依 task 狀態上色、透過 WebSocket 即時更新，沒被選中的那一邊分支會淡化顯示為 `cancelled`，點任一節點可查看它的 payload 與錯誤訊息。
@@ -95,6 +99,8 @@ docker-compose up -d --build
 - API 文件 (Swagger UI): http://localhost:8000/docs
 - 健康檢查: http://localhost:8000/health
 
+第一次進去先在登入頁註冊一組帳號，然後看側邊欄的 **Getting started**（http://localhost:5173/getting-started ）——那裡有一個從建立到執行的完整例子，也是最快上手的方式。
+
 ### 3. 啟動 Locust 壓力測試
 ```bash
 locust -f tests/locustfile.py --host http://localhost:8000
@@ -119,61 +125,84 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | `GET` | `/tasks/{task_id}` | 查詢單一任務詳細狀態與回傳結果 |
 | `DELETE` | `/tasks/{task_id}` | 刪除指定任務 |
 
-### Workflows (DAG)
+### Workflow Definitions（產線）
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
-| `POST` | `/workflows/` | 建立一組 DAG workflow，自動派送沒有依賴的根節點任務 |
-| `GET` | `/workflows/` | 分頁列出所有 workflow |
-| `GET` | `/workflows/{workflow_id}` | 查詢 workflow 整體狀態、每個節點對應任務的即時狀態與最終 `result` |
-| `POST` | `/workflows/{workflow_id}/rerun` | 沿用原始 step 樣板再跑一次，建立一個**新的** workflow，舊那次的狀態與紀錄完整保留 |
-| `POST` | `/workflows/{workflow_id}/promote-to-schedule` | 把這個 workflow 的 step 樣板註冊成 cron 週期排程 |
-| `DELETE` | `/workflows/{workflow_id}` | 刪除 workflow |
+| `POST` | `/definitions/` | 建立一條 workflow 定義（`steps` + 選填的 `input_schema`），本身不執行 |
+| `GET` | `/definitions/` | 分頁列出所有定義，附帶執行次數與最近一次執行 |
+| `GET` | `/definitions/{definition_id}` | 查詢單一定義 |
+| `PUT` | `/definitions/{definition_id}` | 整份取代；`steps` 或 `input_schema` 有變動時版本號自動 +1 |
+| `DELETE` | `/definitions/{definition_id}` | 刪除定義（它的排程一併刪除，已跑過的 run 保留） |
+| `POST` | `/definitions/{definition_id}/runs` | 帶一批 `input` 執行一次，回傳這次的 run |
+| `GET` | `/definitions/{definition_id}/runs` | 分頁列出這條定義的執行紀錄 |
+
+### Workflow Runs（每一次執行）
+| Method | Endpoint | 說明 |
+| :--- | :--- | :--- |
+| `GET` | `/workflows/` | 分頁列出所有 run |
+| `GET` | `/workflows/{workflow_id}` | 查詢整體狀態、每個節點對應任務的即時狀態、這次的 `input` 與最終 `result` |
+| `POST` | `/workflows/{workflow_id}/rerun` | 用同一份快照與同一份輸入再跑一次，建立一個**新的** run，舊那次完整保留 |
+| `POST` | `/workflows/{workflow_id}/retry` | 在**同一筆** run 上從失敗點續跑：失敗的步驟與被它連帶取消的下游重設為 pending，已成功的上游不重跑 |
+| `POST` | `/workflows/{workflow_id}/promote-to-schedule` | 把這次 run 所屬的定義與輸入註冊成 cron 週期排程 |
+| `DELETE` | `/workflows/{workflow_id}` | 刪除這次 run |
+| `POST` | `/workflows/` | **舊路徑**：直接建立一次性的 run（不屬於任何定義），保留給既有腳本與壓測使用 |
 
 一個「餵一批資料進去，下游取用它」的最小範例：
 ```json
-POST /workflows/
+POST /definitions/
 {
   "name": "demo-pipeline",
+  "input_schema": [
+    { "key": "keyword", "label": "關鍵字", "kind": "string", "required": true }
+  ],
   "steps": [
     {
       "key": "input_1", "name": "input", "task_type": "input",
-      "payload": { "data": "{\"keyword\": \"backend\"}" },
+      "payload": { "data": "{}" },
       "depends_on": []
     },
     {
       "key": "greet", "name": "build-greeting", "task_type": "python",
-      "payload": { "code": "def main():\n    return {\"greeting\": \"hello {{steps.input_1.result.keyword}}\"}" },
+      "payload": { "code": "def main():\n    return {'greeting': 'hello ' + inputs['input_1']['keyword']}" },
       "depends_on": ["input_1"]
     }
   ]
 }
 ```
+```json
+POST /definitions/{definition_id}/runs
+{ "input": { "keyword": "backend" } }
+```
 
 **資料怎麼流動**
 
-- `{{steps.<key>.result}}` / `{{steps.<key>.result.<欄位>}}`：取用上游步驟的結果，在派送前由 executor 代換。**step key 只能用英數字與底線**，代換的 regex 是 `[a-zA-Z0-9_]+`
+- `python` 步驟：全域變數 `inputs` 是 `{step_key: 上游結果}`，涵蓋**所有祖先步驟**（不只直接上游），型別完整保留；上游是 `python` 時取的是它 `main()` 的回傳值。也可以宣告成 `def main(inputs):`
+- `shell` 步驟：同一份資料寫在工作目錄的 `inputs.json`，取單一值用 `$(./get_input input_1.keyword)`（點號路徑對應 python 的中括號）
+- `{{steps.<key>.result}}` / `{{steps.<key>.result.<欄位>}}`：其餘任務類型（`http_request`、`condition` 等）用的字串模板，在派送前由 executor 代換。**step key 只能用英數字與底線**，代換的 regex 是 `[a-zA-Z0-9_]+`。這是字串插值，會失去型別，值來自使用者輸入時請優先用上面兩種
 - `{{item}}` / `{{item.<欄位>}}`：`for_each` 動態展開時取用當前項目
 - `{{items}}`：`reduce_of` 步驟取用被收斂的所有結果
-- payload 參照了某個 step，就必須把它加進 `depends_on`，否則建立時會被擋下——不然無法保證它先執行
+- payload 用模板參照了某個 step，就必須把它加進 `depends_on`，否則建立時會被擋下——不然無法保證它先執行
 
 **分支與失敗**
 
 - `depends_on` 可以填多個 key，支援分支與合併（真正的 DAG，不只是線性鏈）
 - `branch_of` + `branch_when` 指向一個 `condition` 步驟，只有結果相符的那一邊會執行；另一邊連同它的下游會被標記為 `cancelled`——這是**預期結果，不代表 workflow 失敗**
-- 任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`
+- 任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`。修掉問題之後可以用 `/retry` 只重跑失敗那一段——沒走到的分支會維持 `cancelled`，不會被誤喚醒
 
 **輸出**：workflow 全部完成時，所有終端節點（沒有其他步驟依賴它）的成功結果會收進 `workflows.result`，格式是 `{step_key: result}`，可在 `GET /workflows/{id}` 的回應與詳情頁的 Result 卡片看到。
 
 ### Schedules（週期性排程）
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
-| `POST` | `/schedules/` | 建立一個綁定 cron 表達式的週期性 workflow（steps 定義同 `/workflows/`） |
+| `POST` | `/schedules/` | 建立一個綁定 cron 表達式的排程：指向一條定義（`definition_id`）並帶著每次要用的 `input` |
 | `GET` | `/schedules/` | 列出所有排程 |
 | `GET` | `/schedules/{schedule_id}` | 查詢單一排程 |
-| `PATCH` | `/schedules/{schedule_id}` | 更新排程內容、cron 或啟用狀態 |
+| `PATCH` | `/schedules/{schedule_id}` | 更新名稱、cron、輸入或啟用狀態 |
 | `DELETE` | `/schedules/{schedule_id}` | 刪除排程 |
 
-Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at` 到期就依 `steps` 建立一份新的 workflow 並派送根節點，再依 cron 表達式計算下一次執行時間。cron 以應用程式設定的時區（`Asia/Taipei`）解讀，跟 `next_run_at` 的顯示、比較邏輯保持一致。
+Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at` 到期就依**定義當下的內容**建立一份新的 run 並派送根節點，再依 cron 表達式計算下一次執行時間。因為排程存的是 `definition_id` 而不是 steps 的複本，修改定義之後下一次觸發就會用新版。cron 以應用程式設定的時區（`Asia/Taipei`）解讀，跟 `next_run_at` 的顯示、比較邏輯保持一致。
+
+排程的 `input` 在存檔當下就依 `input_schema` 驗證，觸發時再驗一次；若定義改動後輸入不再合法，該次觸發會被跳過並記錄原因，時間照常往前推，不會卡住其他排程。
 
 ### 其他
 | Method | Endpoint | 說明 |
@@ -181,7 +210,7 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 | `GET` | `/health` | API 伺服器健康檢查 |
 | `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 
-`/tasks`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。
+`/tasks`、`/definitions`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。
 
 ---
 
@@ -222,7 +251,10 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 React + TypeScript + Tailwind SPA，細節見 [frontend/README.md](frontend/README.md)。`docker-compose up` 起來後 Vite dev server 會自動 proxy `/api` 跟 `/ws` 到後端，不需要另外設 CORS。
 
 - **登入頁**：支援註冊新帳號或用既有帳號登入，登入後 JWT 存在瀏覽器 localStorage，重新整理不用再登入一次。
+- **Getting started 頁**：站內的上手教學，用一個實際例子（輸入 → python 判斷 → 條件分支 → 兩條分支的 shell）走完建立、執行、看結果、設排程的流程，並整理了資料傳遞方式與常見問題排查。
 - **Tasks 頁**：任務列表、篩選、建立單一任務，狀態透過 WebSocket 即時更新。
-- **Workflows 頁**：列出所有建立過的 workflow；「New workflow」進入視覺化畫布編輯器（見上方[章節](#視覺化-workflow-編輯器)）。點進任一 workflow 是同一套畫布的唯讀執行檢視，每個節點即時顯示狀態，全部跑完後下方出現 Result，並可一鍵 Re-run 或升級成排程。
-- **Schedules 頁**：管理週期性 workflow，搭配 cron 表達式輸入（含常用預設如「每天 9:00」），顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。步驟編輯目前仍是表單式的舊介面，尚未換成畫布。
+- **Workflows 頁**：上半部是所有 workflow 定義（執行次數、最近一次執行狀態，可直接 Run / Edit），下半部是最近的執行紀錄。「New workflow」進入視覺化畫布編輯器（見上方[章節](#視覺化-workflow-編輯器)）。
+- **定義詳情頁**：依 `input_schema` 產生的 Run 表單、步驟總覽，以及這條定義的執行紀錄。
+- **執行詳情頁**：用同一套畫布以唯讀模式呈現實際執行狀況，每個節點即時顯示狀態，跑完後出現這次的 Input 與 Result，並可 Re-run、從失敗點 Retry 或升級成排程。
+- **Schedules 頁**：管理週期性排程——選一條 workflow 定義、填 cron 表達式（含常用預設如「每天 9:00」）與這個排程要用的輸入，顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。
 - **Ops 頁**：佇列深度、吞吐量走勢圖、錯誤率等即時監控指標。

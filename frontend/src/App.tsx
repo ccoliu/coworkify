@@ -14,6 +14,7 @@ import { Schedules } from './pages/Schedules'
 import { WorkflowBuilder } from './pages/WorkflowBuilder'
 import { DefinitionDetail } from './pages/DefinitionDetail'
 import { EditDefinition } from './pages/EditDefinition'
+import { GettingStarted } from './pages/GettingStarted'
 
 function ProtectedArea() {
   const { user, isReady } = useAuth()
@@ -46,6 +47,7 @@ export function App() {
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/definitions/:id" element={<DefinitionDetail />} />
         <Route path="/definitions/:id/edit" element={<EditDefinition />} />
+        <Route path='/getting-started' element={<GettingStarted />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

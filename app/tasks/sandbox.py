@@ -133,6 +133,49 @@ def run_sandboxed(build_args, *, shell: bool, timeout_seconds: Any) -> dict[str,
 
     return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
 
+def _write_inputs(tmpdir: str, inputs: Any) -> None:
+    """上游資料走檔案，不貼進原始碼——貼字串會毀掉型別（JSON 的 true/false/null
+    不是合法的 Python 名稱），而且輸入來自表單時等於開了一個注入的洞。"""
+    if inputs is None:
+        return
+    (Path(tmpdir) / INPUTS_FILENAME).write_text(
+        json.dumps(inputs, ensure_ascii=False), encoding="utf-8"
+    )
+
+# 放進 sandbox 工作目錄的小工具，讓 shell 用固定寫法取 inputs.json 裡的值：
+#   THRESHOLD=$(./get_input input_1.threshold)
+# 點號路徑跟 python 步驟的 inputs["input_1"]["threshold"] 對應，list 可用數字索引。
+_GET_INPUT_SCRIPT = '''#!/usr/bin/env python3
+"""coworkify: read one value out of inputs.json. Usage: ./get_input input_1.threshold"""
+import json
+import os
+import sys
+
+path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inputs.json")
+try:
+    with open(path, encoding="utf-8") as f:
+        value = json.load(f)
+except FileNotFoundError:
+    value = {}
+
+raw_path = sys.argv[1] if len(sys.argv) > 1 else ""
+for part in [p for p in raw_path.split(".") if p]:
+    if isinstance(value, list):
+        try:
+            value = value[int(part)]
+        except (ValueError, IndexError):
+            sys.exit("get_input: no such index '%s' in '%s'" % (part, raw_path))
+    elif isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        sys.exit("get_input: no such key '%s' in '%s'" % (part, raw_path))
+
+# 字串原樣輸出（不要多一層引號），其餘印成 JSON 讓它還能再被解析
+print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False))
+'''
+
+GET_INPUT_FILENAME = "get_input"
+
 
 def python_command(code: str, tmpdir: str, *, runner: str, inputs: Any = None) -> list[str]:
     """
@@ -141,13 +184,21 @@ def python_command(code: str, tmpdir: str, *, runner: str, inputs: Any = None) -
     """
     base = Path(tmpdir)
     (base / SCRIPT_FILENAME).write_text(code, encoding="utf-8")
-    # 上游資料走檔案，不貼進原始碼——貼字串會毀掉型別（JSON 的 true/false/null
-    # 不是合法的 Python 名稱），而且輸入來自表單時等於開了一個程式碼注入的洞。
-    if inputs is not None:
-        (base / INPUTS_FILENAME).write_text(
-            json.dumps(inputs, ensure_ascii=False), encoding="utf-8"
-        )
+    _write_inputs(tmpdir, inputs)
 
     runner_path = base / "_coworkify_runner.py"
     runner_path.write_text(runner, encoding="utf-8")
     return [sys.executable, "-I", str(runner_path)]
+
+def shell_command(command: str, tmpdir: str, *, inputs: Any = None) -> str:
+    """
+    shell 指令原樣執行，只是順便把上游資料寫成 inputs.json，外加一支 get_input
+    工具。cwd 就是 tmpdir，所以腳本可以直接用 ./get_input，不必靠字串插值把值
+    塞進指令裡。
+    """
+    _write_inputs(tmpdir, inputs)
+    if inputs is not None:
+        helper = Path(tmpdir) / GET_INPUT_FILENAME
+        helper.write_text(_GET_INPUT_SCRIPT, encoding="utf-8")
+        helper.chmod(0o755)
+    return command

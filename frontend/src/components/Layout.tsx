@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/ops', label: 'Ops', end: false },
   { to: '/workflows', label: 'Workflows', end: false },
   { to: '/schedules', label: 'Schedules', end: false },
+  { to: '/getting-started', label: 'Getting started', end: false }
 ]
 
 export function Layout() {

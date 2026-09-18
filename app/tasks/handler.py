@@ -12,7 +12,7 @@ import socket
 from urllib.parse import urlparse
 import requests
 
-from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME
+from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME, shell_command
 
 #define business logics
 
@@ -176,7 +176,7 @@ def handle_shell(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("payload.command is required for shell task")
 
     return run_sandboxed(
-        command,
+        lambda tmpdir: shell_command(command, tmpdir, inputs=payload.get("inputs")),
         shell=True,
         timeout_seconds=payload.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
     )

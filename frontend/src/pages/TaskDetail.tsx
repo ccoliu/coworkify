@@ -10,6 +10,7 @@ import { Spinner } from '../components/Spinner'
 import { StatusBadge } from '../components/StatusBadge'
 import { useWs } from '../context/WsContext'
 import { useToast } from '../context/ToastContext'
+import { JsonBlock } from '../components/JsonBlock'
 
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -137,9 +138,7 @@ export function TaskDetail() {
                     <div className="mt-0.5 text-xs text-status-critical">{event.error}</div>
                   )}
                   {event.result != null && (
-                    <pre className="mt-1 overflow-x-auto rounded bg-plane p-2 font-mono text-xs text-ink-secondary">
-                      {JSON.stringify(event.result, null, 2)}
-                    </pre>
+                    <JsonBlock value={event.result} />
                   )}
                 </div>
               </li>

@@ -17,6 +17,11 @@ export function DefinitionTable({
             <EmptyState
                 title="No workflows yet"
                 description="Build a workflow once, then run it as many times as you like with different input."
+                action={
+                    <Link to="/getting-started" className="text-sm font-medium text-accent hover:underline">
+                        看 Getting started →
+                    </Link>
+                }
             />
         )
     }

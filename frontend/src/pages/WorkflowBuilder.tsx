@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ApiError, createDefinition, replaceDefinition } from '../lib/apiClient'
 import { defaultPayloadFor, useTaskTypeCatalog } from '../lib/taskTypeCatalog'
-import type { WorkflowDefinition } from '../lib/types'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { Input, Label } from '../components/Field'
@@ -14,7 +13,9 @@ import { TaskTypePalette } from '../features/workflows/TaskTypePalette'
 import { WorkflowBuilderCanvas } from '../features/workflows/WorkflowBuilderCanvas'
 import { useStepsEditor } from '../features/workflows/useStepsEditor'
 import { fromStepCreates, toStepCreates, uniqueStepKey } from '../features/workflows/WorkflowStepsEditor'
-import { issuesByUid, validateGraph } from '../features/workflows/validateGraph'
+import type { TaskFieldSpec, WorkflowDefinition } from '../lib/types'
+import { InputSchemaEditor } from '../features/workflows/InputSchemaEditor'
+import { issuesByUid, validateGraph, validateInputSchema } from '../features/workflows/validateGraph'
 
 /**
  * 定義的畫布編輯器。沒給 definition = 新建（POST），有給 = 編輯（PUT 整份取代）。
@@ -30,13 +31,22 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
 
     const [name, setName] = useState(definition?.name ?? '')
     const [selectedUid, setSelectedUid] = useState<string | null>(null)
+    const [description, setDescription] = useState(definition?.description ?? '')
+    const [inputSchema, setInputSchema] = useState<TaskFieldSpec[]>(definition?.input_schema ?? [])
+    const [showInputs, setShowInputs] = useState((definition?.input_schema.length ?? 0) > 0)
+
     const { steps, updateStep, addStepOfType, removeStep, connectSteps, disconnectSteps } =
         useStepsEditor(() => (definition ? fromStepCreates(definition.steps) : []))
 
     const selectedStep = steps.find((s) => s.uid === selectedUid) ?? null
 
-    const issues = useMemo(() => validateGraph(steps), [steps])
-    const issueMap = useMemo(() => issuesByUid(issues), [issues])
+    const issues = useMemo(
+        () => [...validateGraph(steps), ...validateInputSchema(inputSchema, steps)],
+        [steps, inputSchema],
+    )
+    const errors = useMemo(() => issues.filter((i) => i.severity !== 'warning'), [issues])
+    const warnings = useMemo(() => issues.filter((i) => i.severity === 'warning'), [issues])
+    const issueMap = useMemo(() => issuesByUid(errors), [errors])
 
     const addStep = useCallback(
         (taskType: string) => {
@@ -65,10 +75,8 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
             const body = {
                 name,
                 steps: toStepCreates(steps),
-                // input_schema / description 的編輯器還沒做（B4），編輯時原樣帶回去，
-                // 否則 PUT 整份取代會把它們清掉
-                input_schema: definition?.input_schema ?? [],
-                description: definition?.description ?? null,
+                input_schema: inputSchema,
+                description: description.trim() || null,
             }
             return isEdit ? replaceDefinition(definition.id, body) : createDefinition(body)
         },
@@ -88,7 +96,7 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
         mutation.mutate()
     }
 
-    const canSubmit = name.trim() !== '' && steps.length > 0 && issues.length === 0
+    const canSubmit = name.trim() !== '' && steps.length > 0 && errors.length === 0
     const backTo = isEdit ? `/definitions/${definition.id}` : '/workflows'
 
     return (
@@ -119,13 +127,13 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
                 </div>
             </div>
 
-            {issues.length > 0 && (
+            {errors.length > 0 && (
                 <div className="rounded-lg border border-status-critical/40 bg-status-critical/5 px-4 py-3">
                     <p className="text-sm font-medium text-status-critical">
-                        {issues.length} 個問題需要修正才能儲存
+                        {errors.length} 個問題需要修正才能儲存
                     </p>
                     <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-status-critical">
-                        {issues.map((issue, i) => (
+                        {errors.map((issue, i) => (
                             <li key={`${issue.uid}-${i}`}>
                                 <button
                                     type="button"
@@ -143,6 +151,56 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
                     </ul>
                 </div>
             )}
+
+            {warnings.length > 0 && (
+                <div className="rounded-lg border border-status-warning/40 bg-status-warning/5 px-4 py-3">
+                    <ul className="flex flex-col gap-0.5 text-xs text-status-warning">
+                        {warnings.map((issue, i) => (
+                            <li key={`${issue.uid}-${i}`}>
+                                <button
+                                    type="button"
+                                    disabled={!issue.uid}
+                                    onClick={() => setSelectedUid(issue.uid)}
+                                    className="text-left hover:underline disabled:cursor-default"
+                                >
+                                    •{' '}
+                                    {issue.uid
+                                        ? `${steps.find((s) => s.uid === issue.uid)?.name || 'step'}：${issue.message}`
+                                        : issue.message}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            <Card className="p-0">
+                <button
+                    type="button"
+                    onClick={() => setShowInputs((v) => !v)}
+                    className="flex w-full items-center justify-between px-5 py-3 text-left"
+                >
+                    <span className="text-sm font-semibold text-ink">
+                        Input fields{inputSchema.length > 0 && ` (${inputSchema.length})`}
+                    </span>
+                    <span className="text-xs text-ink-muted">{showInputs ? '收合' : '展開'}</span>
+                </button>
+                {showInputs && (
+                    <div className="border-t border-border px-5 py-4">
+                        <div className="mb-4">
+                            <Label htmlFor="workflow-description">Description</Label>
+                            <Input
+                                id="workflow-description"
+                                value={description}
+                                onChange={(e) => setDescription(e.target.value)}
+                                placeholder="這條 workflow 在做什麼（選填）"
+                            />
+                        </div>
+                        <InputSchemaEditor schema={inputSchema} onChange={setInputSchema} />
+                    </div>
+                )}
+            </Card>
+
 
             <Card className="overflow-hidden p-0">
                 <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">

@@ -197,23 +197,44 @@ def resolve_condition_left(db, step: WorkflowStep, payload: dict) -> dict:
         result = result["value"]
     return {**payload, "left": result}
 
+def _ancestor_task_ids(all_steps: list[WorkflowStep], step: WorkflowStep) -> list[str]:
+    """沿 depends_on 往上游走訪，回傳所有祖先 task id（含直接上游）。"""
+    step_by_task = {str(s.task_id): s for s in all_steps}
+    found: list[str] = []
+    visited = set()
+    frontier = list(step.depends_on)
+    while frontier:
+        tid = frontier.pop()
+        if tid in visited:
+            continue
+        visited.add(tid)
+        found.append(tid)
+        parent = step_by_task.get(tid)
+        if parent:
+            frontier.extend(parent.depends_on)
+    return found
+
 def collect_upstream_inputs(db, step: WorkflowStep, all_steps: list[WorkflowStep]) -> dict:
     """
-    python step 的 main(inputs) 參數：直接上游的 {step_key: result}。
+    python / shell step 拿得到的上游資料：所有祖先步驟的 {step_key: result}。
+
+    刻意不限於直接上游——分支底下的步驟想拿最初的 input step 結果是很常見的需求，
+    為此硬拉一條依賴線只會讓圖變醜。沒有成功結果的（還沒跑、被取消的分支）直接略過。
 
     上游是 python 時取 result["value"]（使用者 main() 真正回傳的東西），其餘取整包
     result——跟 resolve_condition_left 自動帶入 left 的規則一致。for_each 展開出來的
     task 沒有 step_key（會有歧義），退回用 task id 當 key。
     """
-    if not step.depends_on:
+    dep_ids = _ancestor_task_ids(all_steps, step)
+    if not dep_ids:
         return {}
-
-    dep_ids = list(step.depends_on)
     results = collect_step_results(db, dep_ids)
     key_by_task = {str(s.task_id): s.step_key for s in all_steps}
     
     inputs = {}
     for task_id, result in zip(dep_ids, results):
+        if result is None:
+            continue
         task = db.get(Task, uuid.UUID(task_id))
         if task and task.task_type == "python" and isinstance(result, dict) and "value" in result:
             result = result["value"]
@@ -290,7 +311,7 @@ def advance_workflow(db, task: Task):
                         )
                         db.commit()
 
-                    if next_task.task_type == "python":
+                    if next_task.task_type in ("python", "shell"):
                         # 上游資料走 payload.inputs（handler 會寫成 sandbox 裡的
                         # inputs.json），不再靠字串模板貼進原始碼
                         next_task.payload = {

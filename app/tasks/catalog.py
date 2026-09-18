@@ -89,7 +89,9 @@ TASK_TYPE_CATALOG = [
     {
         "task_type": "shell",
         "label": "Shell",
-        "description": "在受限的 subprocess 裡執行一段 shell 指令。",
+        "description": "在受限的 subprocess 裡執行一段 shell 指令。上游步驟的結果放在工作目錄的 "
+                       "inputs.json，取單一值用 $(./get_input input_1.threshold)，"
+                       "點號路徑跟 python 步驟的 inputs[\"input_1\"][\"threshold\"] 對應。",
         "fields": [
             {"key": "command", "label": "Command", "kind": "code", "default": "", "required": True, "help": _SANDBOX_HELP},
             {"key": "timeout_seconds", "label": "Timeout (seconds)", "kind": "number", "default": 10, "required": False, "help": "上限 60 秒。"},
