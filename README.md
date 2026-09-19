@@ -24,7 +24,7 @@
 - **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。
 - **視覺化 Workflow 編輯器**：在畫布上拖拉節點、拉線就是依賴關係，`condition` 節點的 `true` / `false` 出口直接對應 if/else 分支；前端即時鏡射後端的 DAG 驗證規則，問題標在節點上並擋住送出。
 - **定義與執行分離**：workflow 是一條可重複使用的「產線」（`workflow_definitions`），每次執行是一筆帶著自己輸入的 run。run 會保留當下的 step 快照與定義版本號，所以之後修改定義不會改寫歷史紀錄。
-- **表單化的輸入**：定義可以宣告 `input_schema`（欄位名稱、型別、預設值、是否必填），執行前由前端自動產生表單並驗證；填入的值從 `input` 節點進入整條 workflow。
+- **表單化的輸入**：定義可以宣告 `input_schema`（欄位名稱、型別、預設值、是否必填），執行前由前端自動產生表單並驗證；填入的值從 `input` 節點進入整條 workflow。原料也可以來自網頁——`fetch_page` 抓指定網址並依 CSS selector 抽出結構化欄位。
 - **型別安全的資料傳遞**：`python` 步驟以全域變數 `inputs` 取得所有上游結果（型別完整保留），`shell` 以 `$(./get_input <path>)` 取值，兩者都不經過字串插值，避免型別失真與指令注入。
 - **明確的輸出**：跑完後所有終端節點的結果會收進 `workflows.result`，不用再逐一翻每個節點的執行紀錄。
 - **重跑與續跑**：`POST /workflows/{id}/rerun` 用同一份快照與輸入建立新的一次執行；`POST /workflows/{id}/retry` 則在同一次執行上從失敗點續跑，已經成功的上游不重跑。
@@ -45,6 +45,7 @@
 | 任務類型 (task_type) | 說明 |
 | :--- | :--- |
 | `input` | workflow 的資料入口。執行時會被換成 Run 表單填入的值（定義沒宣告 `input_schema` 時則用 payload 裡寫死的 JSON），它的結果就是整條 workflow 的「原料」 |
+| `fetch_page` | 抓一個網頁並依 CSS selector 抽出欄位，另一種「原料來源」。填了 Item selector 會回傳一個 list，可以直接接 `for_each` 逐項處理；沿用 `http_request` 的 SSRF 檢查，且轉址每一跳都重驗 |
 | `python` | 在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 `main()`，它的回傳值會自動成為結果的 `result.value`；上游結果放在全域變數 `inputs` 裡（也可寫成 `main(inputs)`） |
 | `shell` | 在受限的 subprocess 裡執行一段 shell 指令。上游結果放在工作目錄的 `inputs.json`，取單一值用 `$(./get_input input_1.price)` |
 | `http_request` | 發送一個 HTTP 請求，會擋掉指向內網或 cloud metadata endpoint 的目標 |
@@ -123,6 +124,7 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | `POST` | `/tasks/` | 建立並自動派發任務 (支援立即或指定 `scheduled_at` 排程) |
 | `GET` | `/tasks/` | 分頁查詢任務列表 (支援狀態/類型篩選與優先級排序) |
 | `GET` | `/tasks/{task_id}` | 查詢單一任務詳細狀態與回傳結果 |
+| `GET` | `/tasks/{task_id}/logs` | 這個任務的完整執行歷程（由舊到新）：每次重試一筆，含錯誤訊息、結果與執行耗時 |
 | `DELETE` | `/tasks/{task_id}` | 刪除指定任務 |
 
 ### Workflow Definitions（產線）
@@ -255,6 +257,6 @@ React + TypeScript + Tailwind SPA，細節見 [frontend/README.md](frontend/READ
 - **Tasks 頁**：任務列表、篩選、建立單一任務，狀態透過 WebSocket 即時更新。
 - **Workflows 頁**：上半部是所有 workflow 定義（執行次數、最近一次執行狀態，可直接 Run / Edit），下半部是最近的執行紀錄。「New workflow」進入視覺化畫布編輯器（見上方[章節](#視覺化-workflow-編輯器)）。
 - **定義詳情頁**：依 `input_schema` 產生的 Run 表單、步驟總覽，以及這條定義的執行紀錄。
-- **執行詳情頁**：用同一套畫布以唯讀模式呈現實際執行狀況，每個節點即時顯示狀態，跑完後出現這次的 Input 與 Result，並可 Re-run、從失敗點 Retry 或升級成排程。
+- **執行詳情頁**：用同一套畫布以唯讀模式呈現實際執行狀況，每個節點即時顯示狀態，跑完後出現這次的 Input 與 Result，並可 Re-run、從失敗點 Retry 或升級成排程。點任一節點會開啟側邊抽屜，顯示它的 payload 與完整執行歷程（含每一次重試的錯誤訊息，不受重新整理影響）。
 - **Schedules 頁**：管理週期性排程——選一條 workflow 定義、填 cron 表達式（含常用預設如「每天 9:00」）與這個排程要用的輸入，顯示下一次/上一次執行時間，可隨時啟用/停用或編輯。
 - **Ops 頁**：佇列深度、吞吐量走勢圖、錯誤率等即時監控指標。

@@ -36,6 +36,21 @@ class TaskResultResponse(BaseModel):
     result: Optional[Any] = None
     error_message: Optional[str] = None
 
+class TaskLogResponse(BaseModel):
+    """
+    一次執行嘗試的紀錄。同一個 task 會有多筆——每次重試一筆 retrying、
+    最後一筆是 success 或 failed，所以這就是它完整的重試歷程。
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    status: str
+    result: Optional[Any] = None
+    error_message: Optional[str] = None
+    execution_time_ms: Optional[float] = None
+    worker_id: Optional[str] = None
+    created_at: datetime
+
 
 class TaskFieldOption(BaseModel):
     value: str

@@ -88,6 +88,38 @@ const TASK_TYPES: { type: string; label: string; summary: ReactNode; fields: [st
         fields: [['data', '選填', '一段 JSON 物件或陣列。沒有輸入欄位的定義才需要在這裡寫死值；可直接上傳 .json']],
     },
     {
+        type: 'fetch_page',
+        label: 'Fetch page',
+        summary: (
+            <>
+                抓一個網頁並依 CSS selector 抽出欄位，是 <Mono>input</Mono> 之外的另一種原料來源。
+                沿用與 <Mono>http_request</Mono> 相同的 SSRF 檢查，轉址每一跳都會重驗。
+            </>
+        ),
+        fields: [
+            ['url', '必填', <>只接受 http/https；可用 <Mono>{'{{steps...}}'}</Mono> 從上游帶入</>],
+            [
+                'fields',
+                '選填',
+                <>
+                    輸出名稱對應 selector，例如 <Mono>{'{"title": "h1", "link": "a.more @href"}'}</Mono>。加{' '}
+                    <Mono>@屬性</Mono> 取屬性（href / src 自動補成絕對網址），留空字串代表「這個項目自己」。
+                    整個不填則回傳整頁純文字，方便先看內容再寫 selector
+                </>,
+            ],
+            [
+                'item_selector',
+                '選填',
+                <>
+                    重複區塊的 selector。填了就<strong className="text-ink">回傳一個 list</strong>（不是包了 metadata 的
+                    物件），所以可以直接接 <Mono>for_each</Mono> 逐項處理
+                </>,
+            ],
+            ['max_items', '選填', '只在有 Item selector 時生效，預設 20'],
+            ['timeout_seconds', '選填', '預設 10'],
+        ],
+    },
+    {
         type: 'python',
         label: 'Python',
         summary: (
@@ -333,6 +365,11 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                     </li>
                     <li className="list-disc">
                         模板參照誰，就必須連線到誰——否則沒辦法保證它先執行，存檔會被擋下來。
+                    </li>
+                    <li className="list-disc">
+                        在項目裡寫 selector 時要用<strong className="text-ink">相對路徑</strong>：
+                        <Mono>item_selector</Mono> 選到的節點就是「這個項目」，
+                        <Mono>fields</Mono> 裡的 selector 是在它底下找子孫。想取項目自己的文字就把 selector 留空
                     </li>
                 </ul>
                 <p>

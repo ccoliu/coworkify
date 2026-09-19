@@ -9,8 +9,9 @@ from datetime import datetime
 
 import ipaddress
 import socket
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 import requests
+from bs4 import BeautifulSoup
 
 from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME, shell_command
 
@@ -77,6 +78,135 @@ def handle_http_request(payload: Dict[str, Any]) -> Dict[str, Any]:
         response_body = response.text[:2000]
 
     return {"status_code": response.status_code, "response_body": response_body}
+
+_FETCH_MAX_BYTES = 2 * 1024 * 1024
+_FETCH_MAX_REDIRECTS = 3
+_FETCH_TEXT_LIMIT = 4000
+_FETCH_USER_AGENT = "Coworkify/0.1 (+https://github.com/ccoliu/coworkify)"
+
+def _fetch_html(url: str, timeout) -> tuple[str, str]:
+    """
+    抓一個 HTML 頁面，回傳 (最終網址, HTML)。
+    
+    刻意自己處理轉址：requests 的 allow_redirects 會直接跟著跳，導致
+    「第一跳是公開網址、第二跳指回內網」可以繞過 SSRF 檢查。這裡每一跳都重驗一次。
+    """
+    current = url
+    for _ in range(_FETCH_MAX_REDIRECTS + 1):
+        _validate_public_url(current)
+        response = requests.get(
+            current,
+            timeout=timeout,
+            allow_redirects=False,
+            stream=True,
+            headers={"User-Agent": _FETCH_USER_AGENT, "Accept": "text/html,application/xhtml+xml"},
+        )
+
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ValueError(f"Got {response.status_code} without a Location header")
+            current = urljoin(current, location)
+            continue
+
+
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if not any(t in content_type for t in ("html", "xml", "text/plain")):
+            raise ValueError(
+                f"Not an HTML page (Content-Type: {content_type or 'unknown'})——"
+                f"要打 API 請改用 http_request 任務類型"
+            )
+
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(8192):
+            total += len(chunk)
+            if total > _FETCH_MAX_BYTES:
+                raise ValueError(f"Page is larger than {_FETCH_MAX_BYTES // 1024 // 1024}MB")
+            chunks.append(chunk)
+        
+        html = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+        return current, html
+
+    raise ValueError(f"Too many redirects (>{_FETCH_MAX_REDIRECTS})")
+
+def _parse_json_payload_field(raw, field_name: str) -> dict:
+    """前端的 code 欄位給的是 JSON 字串；透過 API 直接送 dict 也接受。"""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"payload.{field_name} 不是合法的 JSON: {exc}") from exc
+    
+    if not isinstance(parsed, dict):
+        raise ValueError(f"payload.{field_name} 解析後不是物件")
+    return parsed
+
+def _extract_fields(node, fields: dict, base_url: str) -> dict:
+    """
+    依 {輸出名稱: selector} 抽值。selector 後面加 '@屬性' 可以取屬性而不是文字，
+    例如 'a @href'；href / src 會自動補成絕對網址。找不到的欄位回 None，不丟錯——
+    網頁改版時讓下游自己決定要不要容忍，比整條 workflow 失敗好。
+    """
+    extracted = {}
+    for name, spec in fields.items():
+        selector, _, attr = str(spec).partition("@")
+        selector = selector.strip()
+        attr = attr.strip()
+
+        found = node.select_one(selector) if selector else node
+        if found is None:
+            extracted[name] = None
+            continue
+        
+        if attr:
+            value = found.get(attr)
+            if value and attr in ("href", "src"):
+                value = urljoin(base_url, value)
+        else:
+            value = found.get_text(" ", strip=True)
+        extracted[name] = value
+    return extracted
+
+def handle_fetch_page(payload: Dict[str, Any]) -> Any:
+    """
+    抓一個固定網頁當作 workflow 的原料。
+
+    有 item_selector 時回傳的是「一個 list」而不是包了 metadata 的 dict——
+    for_each 的契約就是上游結果必須是 list，這樣抓列表頁可以直接逐項展開。
+    """
+    url = payload.get("url")
+    if not url:
+        raise ValueError("payload.url is required for fetch_page task")
+    
+    timeout = payload.get("timeout_seconds", 10)
+    fields = _parse_json_payload_field(payload.get("fields"), "fields")
+    item_selector = str(payload.get("item_selector") or "").strip()
+    max_items = int(payload.get("max_items") or 20)
+
+    final_url, html = _fetch_html(url, timeout)
+    soup = BeautifulSoup(html, "html.parser")
+
+    if item_selector:
+        nodes = soup.select(item_selector)[:max_items]
+        if fields:
+            return [_extract_fields(node, fields, final_url) for node in nodes]
+        return [{"text": node.get_text(" ", strip=True)} for node in nodes]
+
+    if fields:
+        return _extract_fields(soup, fields, final_url)
+
+    # 沒指定要抽什麼就給一份「整頁純文字」，先看得到內容再回頭寫 selector
+    title = soup.title.get_text(strip=True) if soup.title else None
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    return {"title": title, "text": soup.get_text(" ", strip=True)[:_FETCH_TEXT_LIMIT]}
 
 _PY_RESULT_MARKER = "__COWORKIFY_RESULT__"
 
@@ -364,7 +494,8 @@ TASK_REGISTRY = {
     "python": handle_python,
     "shell": handle_shell,
     "condition": handle_condition,
-    "input": handle_input
+    "input": handle_input,
+    "fetch_page": handle_fetch_page,
 }
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數

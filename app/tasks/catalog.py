@@ -64,6 +64,49 @@ TASK_TYPE_CATALOG = [
         ],
     },
     {
+        "task_type": "fetch_page",
+        "label": "Fetch page",
+        "description": "抓一個網頁並依 CSS selector 抽出欄位。不填 Fields 時回傳整頁純文字，"
+                       "方便先看內容再回頭寫 selector。填了 Item selector 會回傳一個 list，"
+                       "可以直接接 for_each 逐項處理。",
+        "fields": [
+            {
+                "key": "url",
+                "label": "URL",
+                "kind": "string",
+                "default": "",
+                "required": True,
+                "help": "只接受 http/https，且會擋掉解析到內網或 cloud metadata 的網址；"
+                        "轉址每一跳都會重新檢查。可用 '{{steps.<key>.result.<欄位>}}' 從上游帶入。",
+            },
+            {
+                "key": "fields",
+                "label": "Fields (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "{}",
+                "required": False,
+                "help": "輸出名稱對應 CSS selector，例如 {\"title\": \"h1\", \"link\": \"a.more @href\"}。"
+                        "selector 後面加 '@屬性' 取屬性值（href / src 會自動補成絕對網址），"
+                        "不加就取文字。找不到的欄位是 null。"
+                        "selector 留空代表「這個項目自己」，例如 Item selector 已經選到 h3 時，"
+                        "寫 {\"title\": \"\", \"link\": \"a @href\"} 就是取 h3 的文字與它底下連結的網址。",
+            },
+            {
+                "key": "item_selector",
+                "label": "Item selector",
+                "kind": "string",
+                "default": "",
+                "required": False,
+                "help": "重複區塊的 selector，例如 '.product-card'。填了就回傳 list，"
+                        "Fields 會套用在每一個項目上。",
+            },
+            {"key": "max_items", "label": "Max items", "kind": "number", "default": 20, "required": False,
+             "help": "只在有 Item selector 時生效。"},
+            {"key": "timeout_seconds", "label": "Timeout (seconds)", "kind": "number", "default": 10, "required": False},
+        ],
+    },
+    {
         "task_type": "python",
         "label": "Python",
         "description": "在受限的 subprocess 裡執行一段 Python 程式碼。定義一個 main()，"
