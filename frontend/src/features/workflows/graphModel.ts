@@ -81,9 +81,9 @@ export function stepsFromDrafts(drafts: StepDraft[]): GraphStep[] {
         dependsOn: d.dependsOnUids.filter((u) => known.has(u)),
         branchOfId: d.branchOfUid,
         branchWhen: d.branchWhen,
-        isReduce: false,
+        isReduce: d.reduceOfUid != null,
         forEachId: d.forEachUid,
-        reduceOfId: null,
+        reduceOfId: d.reduceOfUid,
     }))
 }
 

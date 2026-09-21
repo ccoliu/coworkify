@@ -18,6 +18,9 @@ export interface StepDraft {
     maxRetries: number
     dependsOnUids: string[]
     forEachUid: string | null
+    /** 非 null 代表這是 reduce 步驟：等那個 for_each 步驟的所有展開結果都完成後才執行。
+     *  reduce 步驟不能有自己的 depends_on（後端在展開後自動填），也不能同時是 for_each 或分支。 */
+    reduceOfUid: string | null
     branchOfUid: string | null
     branchWhen: 'true' | 'false' | null
 }
@@ -35,6 +38,7 @@ export function makeStep(dependsOn: string[] = []): StepDraft {
         maxRetries: 3,
         dependsOnUids: dependsOn,
         forEachUid: null,
+        reduceOfUid: null,
         branchOfUid: null,
         branchWhen: null,
     }
@@ -299,6 +303,7 @@ export function toStepCreates(steps: StepDraft[]): WorkflowStepCreate[] {
         max_retries: s.maxRetries,
         depends_on: toKeys(effectiveDependsOn(s)),
         for_each: s.forEachUid ? keyByUid.get(s.forEachUid) : undefined,
+        reduce_of: s.reduceOfUid ? keyByUid.get(s.reduceOfUid) : undefined,
         branch_of: s.branchOfUid ? keyByUid.get(s.branchOfUid) : undefined,
         branch_when: s.branchWhen ?? undefined,
     }));
@@ -306,8 +311,6 @@ export function toStepCreates(steps: StepDraft[]): WorkflowStepCreate[] {
 
 /**
  * 載入用：toStepCreates 的反向。後端的 key 參照換回畫布內部的 uid。
- * 不支援 reduce_of（StepDraft 沒有這個欄位）——呼叫端要先用 hasUnsupportedSteps 擋掉，
- * 否則存回去會把 reduce 設定洗掉。
  */
 export function fromStepCreates(creates: WorkflowStepCreate[]): StepDraft[] {
     const uidByKey = new Map(creates.map((c) => [c.key, crypto.randomUUID()]))
@@ -327,11 +330,8 @@ export function fromStepCreates(creates: WorkflowStepCreate[]): StepDraft[] {
             return uid ? [uid] : []
         }),
         forEachUid: toUid(c.for_each),
+        reduceOfUid: toUid(c.reduce_of),
         branchOfUid: toUid(c.branch_of),
         branchWhen: c.branch_when ?? null,
     }))
-}
-
-export function hasUnsupportedSteps(creates: WorkflowStepCreate[]): boolean {
-    return creates.some((c) => c.reduce_of != null);
 }

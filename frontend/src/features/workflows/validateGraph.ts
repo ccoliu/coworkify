@@ -17,9 +17,56 @@ const STEP_KEY_RE = /^[a-zA-Z0-9_]+$/
 const STEP_REF_RE = /\{\{\s*steps\.([a-zA-Z0-9_]+)\.result(?:\.[a-zA-Z0-9_]+)*\s*\}\}/g
 const STEP_REF_SYNTAX = '{{steps.<key>.result}}'
 
+// 任何 {{...}}，用來找出「看起來像模板、但其實不會被代換」的寫法
+const ANY_TEMPLATE_RE = /\{\{\s*([^{}]*?)\s*\}\}/g
+const VALID_STEP_REF_RE = /^steps\.[a-zA-Z0-9_]+\.result(?:\.[a-zA-Z0-9_]+)*$/
+const ITEM_REF_RE = /^item(?:\.[a-zA-Z0-9_.]+)?$/
+
 function referencedKeys(payload: Record<string, unknown>): string[] {
     return [...JSON.stringify(payload ?? {}).matchAll(STEP_REF_RE)].map((m) => m[1])
 }
+
+/**
+ * 模板寫錯時，executor 不會報錯，而是把 {{...}} 原樣送出去——通知收到一串大括號、
+ * 網址變成 404，症狀離原因很遠。這裡把「長得像模板但不會被代換」的寫法抓出來。
+ */
+function templateWarnings(step: StepDraft, stepKeys: Set<string>): string[] {
+    // python 程式碼裡的 {{ 可能是 f-string 的跳脫（f"{{literal}}"），不檢查
+    const scanned =
+        step.taskType === 'python'
+            ? Object.fromEntries(Object.entries(step.payload ?? {}).filter(([k]) => k !== 'code'))
+            : step.payload ?? {}
+
+    const warnings = new Set<string>()
+    for (const match of JSON.stringify(scanned).matchAll(ANY_TEMPLATE_RE)) {
+        const inner = match[1]
+        const raw = `{{${inner}}}`
+
+        if (VALID_STEP_REF_RE.test(inner)) continue
+
+        if (ITEM_REF_RE.test(inner)) {
+            if (!step.forEachUid) warnings.add(`${raw} 只在 for_each 展開步驟裡有值，這裡會原樣送出`)
+            continue
+        }
+        if (inner === 'items') {
+            if (!step.reduceOfUid) warnings.add(`${raw} 只在 reduce 步驟裡有值，這裡會原樣送出`)
+            continue
+        }
+
+        // 常見的是順序寫反（{{input_1.steps.result.x}}），有提到既有的 step key 就直接給出正確寫法
+        const parts = inner.split('.')
+        const mentioned = parts.find((p) => stepKeys.has(p))
+        if (mentioned) {
+            const resultAt = parts.indexOf('result')
+            const tail = resultAt >= 0 ? parts.slice(resultAt + 1).map((p) => `.${p}`).join('') : ''
+            warnings.add(`看不懂的模板 ${raw}，執行時會原樣送出；是不是要寫 {{steps.${mentioned}.result${tail}}}？`)
+        } else {
+            warnings.add(`看不懂的模板 ${raw}，執行時會原樣送出；格式是 {{steps.<step key>.result.<欄位>}}`)
+        }
+    }
+    return [...warnings]
+}
+
 
 export function validateGraph(steps: StepDraft[]): StepIssue[] {
     const issues: StepIssue[] = []
@@ -33,6 +80,7 @@ export function validateGraph(steps: StepDraft[]): StepIssue[] {
 
     const byUid = new Map(steps.map((s) => [s.uid, s]))
     const uidByKey = new Map(steps.map((s) => [s.key, s.uid]))
+    const stepKeys = new Set(steps.map((s) => s.key))
     const nameOf = (uid: string) => byUid.get(uid)?.name.trim() || byUid.get(uid)?.key || 'step'
 
     const keyCount = new Map<string, number>()
@@ -71,6 +119,22 @@ export function validateGraph(steps: StepDraft[]): StepIssue[] {
             if (!refUid) add(step.uid, `payload 參照了不存在的 step「${ref}」`)
             else if (!deps.includes(refUid)) {
                 add(step.uid, `payload 參照了「${ref}」的結果，必須在畫布上把它連成上游`)
+            }
+        }
+
+        // reduce（對應 validate_dag 的 reduce_of 段落）
+        if (step.reduceOfUid) {
+            const src = byUid.get(step.reduceOfUid)
+            if (step.reduceOfUid === step.uid) add(step.uid, '不能 reduce 自己')
+            else if (!src) add(step.uid, 'reduce 來源已不存在')
+            else if (!src.forEachUid) {
+                add(step.uid, `reduce 來源「${nameOf(step.reduceOfUid)}」不是 for_each 展開步驟`)
+            }
+            if (step.forEachUid) add(step.uid, '不能同時是 for_each 與 reduce 步驟')
+            if (step.branchOfUid) add(step.uid, '不能同時是 branch 與 reduce 步驟')
+            if (deps.length > 0) add(step.uid, 'reduce 步驟的依賴會在展開後自動決定，不能自己拉線進來')
+            if (refs.length > 0) {
+                add(step.uid, 'reduce 步驟的 payload 不支援 {{steps...}}，請用 {{items}}（python 用 inputs）')
             }
         }
 
@@ -136,6 +200,9 @@ export function validateGraph(steps: StepDraft[]): StepIssue[] {
         ) {
             warn(step.uid, 'python 程式碼不需要 {{steps...}}：上游結果放在全域變數 inputs 裡，或寫成 main(inputs)')
         }
+
+        for (const message of templateWarnings(step, stepKeys)) warn(step.uid, message)
+
     }
 
     // 循環依賴：跟後端同樣是三色 DFS，但把所有涉及的節點都收集起來而不是拋第一個。

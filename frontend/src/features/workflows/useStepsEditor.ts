@@ -36,6 +36,7 @@ export function useStepsEditor(initial: () => StepDraft[]) {
                     branchOfUid: s.branchOfUid === uid ? null : s.branchOfUid,
                     branchWhen: s.branchOfUid === uid ? null : s.branchWhen,
                     forEachUid: s.forEachUid === uid ? null : s.forEachUid,
+                    reduceOfUid: s.reduceOfUid === uid ? null : s.reduceOfUid,
                 })),
         )
     }

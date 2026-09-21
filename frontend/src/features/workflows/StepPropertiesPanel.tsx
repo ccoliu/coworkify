@@ -20,6 +20,8 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
     const nameOf = (uid: string) => byUid.get(uid)?.name.trim() || 'step'
     // for_each 來源：不能是自己，也不能是另一個展開步驟
     const forEachCandidates = steps.filter((s) => s.uid !== step.uid && !s.forEachUid)
+    // reduce 來源：只能是 for_each 展開步驟（後端 validate_dag 的同一條規則）
+    const reduceCandidates = steps.filter((s) => s.uid !== step.uid && s.forEachUid)
 
     return (
         <div className="flex h-full flex-col">
@@ -105,7 +107,7 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                     </div>
                 </div>
 
-                {forEachCandidates.length > 0 && (
+                {forEachCandidates.length > 0 && !step.reduceOfUid && (
                     <div>
                         <Label htmlFor="step-foreach">For each item from</Label>
                         <Select
@@ -133,6 +135,47 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                             <p className="mt-1 text-xs text-ink-muted">
                                 依上游結果（須為 list）逐項展開；payload 可用{' '}
                                 <code className="font-mono">{'{{item.欄位}}'}</code> 參照該項目。
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                {reduceCandidates.length > 0 && !step.forEachUid && (
+                    <div>
+                        <Label htmlFor="step-reduce">Reduce from</Label>
+                        <Select
+                            id="step-reduce"
+                            value={step.reduceOfUid ?? ''}
+                            onChange={(e) => {
+                                const reduceOfUid = e.target.value || null
+                                onUpdate(
+                                    step.uid,
+                                    reduceOfUid
+                                        ? {
+                                            reduceOfUid,
+                                            // reduce 步驟的依賴由後端在展開後自動填入，
+                                            // 自己拉的線、分支都不合法，一併清掉
+                                            dependsOnUids: [],
+                                            branchOfUid: null,
+                                            branchWhen: null,
+                                        }
+                                        : { reduceOfUid: null },
+                                )
+                            }}
+                        >
+                            <option value="">— not a reduce step —</option>
+                            {reduceCandidates.map((other) => (
+                                <option key={other.uid} value={other.uid}>
+                                    {nameOf(other.uid)}
+                                </option>
+                            ))}
+                        </Select>
+                        {step.reduceOfUid && (
+                            <p className="mt-1 text-xs text-ink-muted">
+                                等那個步驟的每一項都跑完才執行。python 用{' '}
+                                <code className="font-mono">{`inputs["${byUid.get(step.reduceOfUid)?.key ?? '<key>'}"]`}</code>{' '}
+                                拿到依項目順序排好的結果 list；其他類型用{' '}
+                                <code className="font-mono">{'{{items}}'}</code>。這個步驟不能再拉入線。
                             </p>
                         )}
                     </div>

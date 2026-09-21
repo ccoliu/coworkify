@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom'
 import { getDefinition } from '../lib/apiClient'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
-import { hasUnsupportedSteps } from '../features/workflows/WorkflowStepsEditor'
 import { WorkflowBuilder } from './WorkflowBuilder'
 
 export function EditDefinition() {
@@ -27,20 +26,6 @@ export function EditDefinition() {
             <EmptyState
                 title="Workflow not found"
                 action={<Link to="/workflows" className="text-sm font-medium text-accent">Back to workflows</Link>}
-            />
-        )
-    }
-
-    if (hasUnsupportedSteps(definition.steps)) {
-        return (
-            <EmptyState
-                title="這個 workflow 還不能用畫布編輯"
-                description="它用到了 reduce_of，builder 目前不支援——在這裡存檔會把 reduce 設定洗掉。請先透過 API（PUT /definitions/{id}）修改。"
-                action={
-                    <Link to={`/definitions/${definition.id}`} className="text-sm font-medium text-accent">
-                        Back to {definition.name}
-                    </Link>
-                }
             />
         )
     }

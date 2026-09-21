@@ -218,6 +218,8 @@ function BuilderCanvas({
             const target = steps.find((s) => s.uid === c.target)
             const source = steps.find((s) => s.uid === c.source)
             if (!target || !source) return false
+            // reduce 步驟的依賴是後端展開後自動填的，不能手動拉線進去
+            if (target.reduceOfUid) return false
             // 展開步驟只能依賴同一組的其他展開步驟（跟舊表單同一條規則）
             if ((target.forEachUid ?? null) !== (source.forEachUid ?? null)) return false
             if (target.dependsOnUids.includes(c.source)) return false
@@ -256,7 +258,7 @@ function BuilderCanvas({
                 onEdgeDoubleClick={(_, edge) => removeEdge(edge.id)}
                 onPaneClick={() => selectNode(null)}
                 onConnectEnd={(_, state) => {
-                    if (!state.isValid) onInvalid('這條連線不合法：會造成循環、重複，或跨越 for_each 分組')
+                    if (!state.isValid) onInvalid('這條連線不合法：會造成循環、重複、跨越 for_each 分組，或連進 reduce 步驟')
                 }}
                 fitView
                 fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
