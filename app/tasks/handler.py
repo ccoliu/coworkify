@@ -208,6 +208,61 @@ def handle_fetch_page(payload: Dict[str, Any]) -> Any:
 
     return {"title": title, "text": soup.get_text(" ", strip=True)[:_FETCH_TEXT_LIMIT]}
 
+_DISCORD_COLORS = {
+    "info": 0x5865F2,
+    "success": 0x2ECC71,
+    "warning": 0xF1C40F,
+    "critical": 0xE74C3C,
+}
+_DISCORD_TITLE_LIMIT = 256
+_DISCORD_DESC_LIMIT = 4096
+
+def handle_notify(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    送一則 Discord webhook 通知。
+
+    webhook URL 預設從 worker 的 DISCORD_WEBHOOK_URL 環境變數讀——它是一組等同密碼的
+    憑證，不該寫進 workflow 定義（定義會被匯出、進版控、給別人看）。payload 裡也可以
+    指定，但那是給「同一個 workflow 要送不同頻道」這種情況用的。
+    """
+    webhook_url = payload.get("webhook_url") or os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+         raise ValueError(
+            "找不到 webhook URL：請在 worker 的 .env 設定 DISCORD_WEBHOOK_URL，"
+            "或在這個步驟的 payload.webhook_url 填入"
+        )
+
+    _validate_public_url(webhook_url)
+
+    title = str(payload.get("title") or "Coworkify")
+    message = payload.get("message")
+    if message is None or str(message).strip() == "":
+        raise ValueError("payload.message is required for notify task")
+    # 上游結果直接接過來時可能是 dict / list，轉成看得懂的文字
+    if not isinstance(message, str):
+        message = json.dumps(message, indent=2, ensure_ascii=False)
+        
+    link = str(payload.get("link") or "").strip()
+    color = _DISCORD_COLORS.get(str(payload.get("level") or "info"), _DISCORD_COLORS["info"])
+
+    embed: Dict[str, Any] = {
+        "title": title[:_DISCORD_TITLE_LIMIT],
+        "description": message[:_DISCORD_DESC_LIMIT],
+        "color": color,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    if link:
+        embed["url"] = link
+    
+    response = requests.post(webhook_url, json={"embeds": [embed]}, timeout=10)
+    if response.status_code == 429:
+        # Discord 的限流。丟例外交給既有的重試與指數退避處理
+        raise RuntimeError(f"Discord rate limited this webhook: {response.text[:200]}")
+    response.raise_for_status()
+
+    return {"delivered": True, "status_code": response.status_code, "title": embed["title"]}
+
+
 _PY_RESULT_MARKER = "__COWORKIFY_RESULT__"
 
 # 附加在使用者程式碼後面的驅動程式碼：如果使用者定義了一個叫 main 的函式，
@@ -435,6 +490,35 @@ def _resolve_agent_step_workspace(explicit: str | None) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     return workspace
 
+_AGENT_FIELD_TYPES = {"string": str, "number": float, "integer": int, "boolean": bool}
+
+def _agent_output_model(spec: dict):
+    """
+    把 {"fixable": "boolean", "confidence": ["high", "medium", "low"]} 這種簡單寫法
+    轉成 pydantic model，交給 Codoctopus 做 structured output。刻意不收完整的 JSON Schema：
+    小模型面對複雜 schema 很容易失敗，而這幾種型別已經涵蓋「判斷 + 理由」這類用途。
+    """
+    from typing import Literal
+
+    from pydantic import create_model
+
+    fields = {}
+    for name, kind in spec.items():
+        if not str(name).isidentifier():
+            raise ValueError(f"output_fields 的欄位名稱 '{name}' 只能用英數字或底線")
+        if isinstance(kind, list):
+            if not kind or not all(isinstance(v, str) for v in kind):
+                raise ValueError(f"output_fields.{name}：選項必須是非空的字串 list")
+            fields[name] = (Literal[tuple(kind)], ...)
+        elif kind in _AGENT_FIELD_TYPES:
+            fields[name] = (_AGENT_FIELD_TYPES[kind], ...)
+        else:
+            raise ValueError(
+                f"output_fields.{name} 的型別 '{kind}' 不支援；"
+                f"可用 string / number / integer / boolean，或一個字串 list 代表只能擇一"
+            )
+    return create_model("AgentOutput", **fields)
+        
 
 def handle_agent_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -475,9 +559,17 @@ def handle_agent_step(payload: Dict[str, Any]) -> Dict[str, Any]:
         workspace = _resolve_agent_step_workspace(payload.get("workspace"))
         tools = ToolRegistry([factories[name]() for name in tool_names], workspace=workspace)
 
-    agent = Agent(provider, system=role, tools=tools)
+    output_fields = _parse_json_payload_field(payload.get("output_fields"), "output_fields")
+    output_schema = _agent_output_model(output_fields) if output_fields else None
+
+    agent = Agent(provider, system=role, tools=tools, output_schema=output_schema)
     result = asyncio.run(agent.run(instruction))
 
+    if output_schema is not None:
+        if result.parsed is None:
+            raise RuntimeError(f"模型沒有回傳符合 output_fields 的 JSON。原始輸出：{result.text[:500]!r}")
+        # 直接回傳物件本身，下游寫 inputs["judge"]["fixable"] 就好，不用多撥一層
+        return result.parsed.model_dump()
     return {"output": result.text}
 
 
@@ -496,6 +588,7 @@ TASK_REGISTRY = {
     "condition": handle_condition,
     "input": handle_input,
     "fetch_page": handle_fetch_page,
+    "notify": handle_notify
 }
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數

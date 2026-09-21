@@ -69,6 +69,7 @@
 
 - **拖拉建置**：左側面板把任務類型拖進畫布就是一個節點，節點之間拉一條線就是 `depends_on`
 - **分支即連線**：`condition` 節點右側有 `true` / `false` 兩個出口，從哪個出口拉線出去，就自動設好該步驟的 `branch_of` / `branch_when`，不需要手動對應 step key
+- **展開與收斂**：屬性面板的 For each / Reduce from 設定 fan-out 與 fan-in，畫布以虛線標出資料從哪裡來；reduce 步驟會拒絕手動拉入的連線（它的依賴由系統在展開後決定）
 - **屬性面板**：右側表單依 `GET /tasks/types` 的欄位規格動態產生；`python` / `shell` 的程式碼欄位是 CodeMirror 編輯器（語法高亮、自動縮排、可放大成 modal 編輯，也可以直接上傳 `.py`）
 - **輸入欄位編輯器**：畫布上方可以定義這條 workflow 的 `input_schema`（key／顯示名稱／型別／預設值／必填／選項），執行與排程的表單都照它產生，形狀與 `GET /tasks/types` 的欄位規格相同
 - **即時驗證**：前端鏡射了一份後端 `validate_dag` 的規則（見 `frontend/src/features/workflows/validateGraph.ts`），問題會即時標在節點上、列在畫布上方，有錯就擋住送出。後端那份仍是最終把關，兩邊必須同步維護。另有不擋送出的黃色警告，例如 `python` 程式碼裡仍在使用 `{{steps...}}` 模板
@@ -182,7 +183,14 @@ POST /definitions/{definition_id}/runs
 - `shell` 步驟：同一份資料寫在工作目錄的 `inputs.json`，取單一值用 `$(./get_input input_1.keyword)`（點號路徑對應 python 的中括號）
 - `{{steps.<key>.result}}` / `{{steps.<key>.result.<欄位>}}`：其餘任務類型（`http_request`、`condition` 等）用的字串模板，在派送前由 executor 代換。**step key 只能用英數字與底線**，代換的 regex 是 `[a-zA-Z0-9_]+`。這是字串插值，會失去型別，值來自使用者輸入時請優先用上面兩種
 - `{{item}}` / `{{item.<欄位>}}`：`for_each` 動態展開時取用當前項目
-- `{{items}}`：`reduce_of` 步驟取用被收斂的所有結果
+- `{{items}}`：`reduce_of` 步驟取用被收斂的所有結果。`python` 的 reduce 步驟則直接用 `inputs["<for_each 步驟的 key>"]`，拿到的是**依項目順序排好**的結果 list（不管各項目實際完成的先後），可以跟 for_each 的來源 list 直接 `zip`
+
+**展開與收斂（for_each / reduce）**
+
+- 某個步驟設了 `for_each: <key>`，就會依那個步驟的結果（必須是 list；python 步驟取它 `main()` 的回傳值）逐項展開成 N 個 task，並行執行
+- 另一個步驟設 `reduce_of: <for_each 步驟的 key>`，會等所有展開出來的 task 都完成才執行，把它們的結果收成一個 list——這就是 fan-out / fan-in
+- reduce 步驟的依賴在展開後由系統自動決定，不能自己設 `depends_on`；也不能同時是 for_each 或分支步驟
+- 畫布上兩者都在右側屬性面板設定（For each / Reduce from），以標著 `for each`、`reduce` 的虛線呈現，跟一般依賴的實線區隔
 - payload 用模板參照了某個 step，就必須把它加進 `depends_on`，否則建立時會被擋下——不然無法保證它先執行
 
 **分支與失敗**

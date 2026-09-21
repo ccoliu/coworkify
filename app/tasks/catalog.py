@@ -197,6 +197,54 @@ TASK_TYPE_CATALOG = [
                 "required": False,
                 "help": "留空則用共用暫存目錄；同一個 workflow 的多個 step 要共用檔案時才需要指定。",
             },
+            {
+                "key": "output_fields",
+                "label": "Output fields (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "{}",
+                "required": False,
+                "help": "要求 agent 回傳固定格式，例如 "
+                        "{\"fixable\": \"boolean\", \"confidence\": [\"high\", \"medium\", \"low\"], \"reason\": \"string\"}。"
+                        "型別可用 string / number / integer / boolean，或一個字串 list 代表只能擇一。"
+                        "有填時結果就是這個物件本身，下游直接取 inputs[\"<key>\"][\"fixable\"]。",
+            },
+        ],
+    },
+     {
+        "task_type": "notify",
+        "label": "Notify (Discord)",
+        "description": "送一則 Discord webhook 通知，通常放在 workflow 的最後一步。"
+                       "訊息可以用 '{{steps.<key>.result...}}' 帶入上游結果；上游是 dict 或 list 時會自動轉成 JSON 文字。",
+        "fields": [
+            {"key": "title", "label": "Title", "kind": "string", "default": "Coworkify", "required": False,
+             "help": "Discord embed 的標題，上限 256 字。"},
+            {"key": "message", "label": "Message", "kind": "text", "default": "", "required": True,
+             "help": "內容，上限 4096 字，超過會截斷。"},
+            {"key": "link", "label": "Link", "kind": "string", "default": "", "required": False,
+             "help": "填了標題就會變成可點的連結。"},
+            {
+                "key": "level",
+                "label": "Level",
+                "kind": "select",
+                "default": "info",
+                "required": False,
+                "options": [
+                    {"value": "info", "label": "Info（藍）"},
+                    {"value": "success", "label": "Success（綠）"},
+                    {"value": "warning", "label": "Warning（黃）"},
+                    {"value": "critical", "label": "Critical（紅）"},
+                ],
+            },
+            {
+                "key": "webhook_url",
+                "label": "Webhook URL",
+                "kind": "string",
+                "default": "",
+                "required": False,
+                "help": "留空就用 worker 的 DISCORD_WEBHOOK_URL 環境變數——"
+                        "webhook URL 等同密碼，建議不要寫進 workflow 定義裡。",
+            },
         ],
     },
 ]

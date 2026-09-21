@@ -214,31 +214,58 @@ def _ancestor_task_ids(all_steps: list[WorkflowStep], step: WorkflowStep) -> lis
             frontier.extend(parent.depends_on)
     return found
 
+def _unwrap_result(task_type: str | None, result):
+    """
+    python task 的結果是 {stdout, stderr, exit_code, value}，使用者 main() 真正回傳的
+    東西在 value 裡。凡是「拿上游結果來用」的地方都該看 value，而不是整包。
+    """
+    if task_type == "python" and isinstance(result, dict) and "value" in result:
+        return result["value"]
+    return result
+
+def _task_types(db, task_ids: list[str]) -> dict[str, str]:
+    """一次查回多個 task 的 task_type，免得逐筆 db.get。"""
+    uuids = [uuid.UUID(t) for t in task_ids]
+    rows = db.execute(select(Task.id, Task.task_type).where(Task.id.in_(uuids))).all()
+    return {str(task_id): task_type for task_id, task_type in rows}
+
+ 
 def collect_upstream_inputs(db, step: WorkflowStep, all_steps: list[WorkflowStep]) -> dict:
     """
     python / shell step 拿得到的上游資料：所有祖先步驟的 {step_key: result}。
 
     刻意不限於直接上游——分支底下的步驟想拿最初的 input step 結果是很常見的需求，
     為此硬拉一條依賴線只會讓圖變醜。沒有成功結果的（還沒跑、被取消的分支）直接略過。
+    上游是 python 時取 result["value"]，見 _unwrap_result。
 
-    上游是 python 時取 result["value"]（使用者 main() 真正回傳的東西），其餘取整包
-    result——跟 resolve_condition_left 自動帶入 left 的規則一致。for_each 展開出來的
-    task 沒有 step_key（會有歧義），退回用 task id 當 key。
+    reduce 步驟另外多一項：inputs[<reduce_of 的 key>] 是那組展開結果，依 for_each 的
+    項目順序排好，可以直接跟 for_each 的來源 list zip 起來用。
     """
-    dep_ids = _ancestor_task_ids(all_steps, step)
-    if not dep_ids:
-        return {}
-    results = collect_step_results(db, dep_ids)
+    inputs: dict = {}
     key_by_task = {str(s.task_id): s.step_key for s in all_steps}
     
-    inputs = {}
-    for task_id, result in zip(dep_ids, results):
-        if result is None:
-            continue
-        task = db.get(Task, uuid.UUID(task_id))
-        if task and task.task_type == "python" and isinstance(result, dict) and "value" in result:
-            result = result["value"]
-        inputs[key_by_task.get(task_id) or task_id] = result
+    # 只收有 step_key 的祖先。for_each 展開出來的 task 沒有 key（同一個模板展開成 N 份，
+    # 用 key 會互相覆蓋）；以前退回用 task id 當 key，inputs 裡就混進一堆使用者不可能
+    # 知道的 UUID。展開結果改由下面的 reduce 分支以「依項目排序的 list」提供。
+    dep_ids = [tid for tid in _ancestor_task_ids(all_steps, step) if key_by_task.get(tid)]
+    if dep_ids:
+        types = _task_types(db, dep_ids)
+        for task_id, result in zip(dep_ids, collect_step_results(db, dep_ids)):
+            if result is None:
+                continue
+            inputs[key_by_task[task_id]] = _unwrap_result(types.get(task_id), result)
+    
+    # reduce 的 depends_on 在 expand_dynamic_steps 裡就是照項目順序填的，所以這個 list
+    # 的第 i 項一定對應 for_each 來源的第 i 項。沒有結果的項目保留 None，不壓縮，
+    # 否則兩邊 zip 起來會錯位。
+    if step.reduce_of_key and step.depends_on:
+        member_ids = list(step.depends_on)
+        types = _task_types(db, member_ids)
+        inputs[step.reduce_of_key] = [
+            _unwrap_result(types.get(task_id), result)
+            for task_id, result in zip(member_ids, collect_step_results(db, member_ids))
+        ]
+
     return inputs
 
 
@@ -686,7 +713,17 @@ def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
         .where(TaskLog.task_id == map_task.id, TaskLog.status == TaskStatus.SUCCESS)
         .order_by(TaskLog.created_at.desc())
     ).first()
-    items = log.result if log and isinstance(log.result, list) else []
+
+    # python 來源的結果是 {stdout, value, ...}，真正的 list 在 value 裡；
+    # 不先剝開的話，python 後面接 for_each 會靜悄悄地展開成 0 項
+    items = _unwrap_result(map_task.task_type, log.result if log else None)
+    if not isinstance(items, list):
+        print(
+            f"[workflow {workflow.id}] for_each source {map_task.id} ({map_task.task_type}) "
+            f"did not return a list; expanding 0 items",
+            flush=True,
+        )
+        items = []
 
     # item_index -> template key -> 展開出來的 task id
     expanded_task_ids: dict[int, dict[str, uuid.UUID]] = {}
