@@ -60,6 +60,7 @@ export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) 
                                     <div className="font-medium text-ink">{sched.name}</div>
                                     <div className="font-mono text-xs text-ink-muted">{shortId(sched.id)}</div>
                                 </td>
+                                <td className="px-4 py-3 font-mono text-xs text-ink-secondary">{sched.cron_expression}</td>
                                 <td className="px-4 py-3">
                                     {sched.definition_id ? (
                                         <Link

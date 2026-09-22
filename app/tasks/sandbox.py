@@ -33,6 +33,11 @@ except ImportError:  # pragma: no cover - resource is POSIX-only
 INPUTS_FILENAME = "inputs.json"
 SCRIPT_FILENAME = "script.py"
 
+# python 步驟的回傳值寫在這個檔案裡，不經過 stdout——stdout 會被截斷到
+# MAX_OUTPUT_CHARS，回傳值一大就會跟著被切掉，靜悄悄地變成 null。
+RESULT_FILENAME = "_coworkify_result.json"
+_MAX_RESULT_BYTES = 1024 * 1024  # 回傳值上限 1MB，它會存進 task_logs 並傳給下游
+
 MAX_TIMEOUT_SECONDS = 60
 DEFAULT_TIMEOUT_SECONDS = 10
 MAX_OUTPUT_CHARS = 4000
@@ -79,15 +84,20 @@ def _truncate(text: str) -> str:
     return text[:MAX_OUTPUT_CHARS] + f"\n...[truncated, {len(text) - MAX_OUTPUT_CHARS} more chars]"
 
 
-def run_sandboxed(build_args, *, shell: bool, timeout_seconds: Any) -> dict[str, Any]:
+def run_sandboxed(
+    build_args, *, shell: bool, timeout_seconds: Any, result_file: str | None = None) -> dict[str, Any]:
     """跑一個受限的 subprocess，回傳 {stdout, stderr, exit_code}。
     非 0 exit code 會被視為失敗，丟出 RuntimeError（附帶 stdout/stderr 摘要）。
 
     build_args 可以是現成的 command（list[str] 或 shell 字串），也可以是
     callable(tmpdir: str) -> command——後者可以在拿到 tmpdir 之後才把使用者
     程式碼寫進去，讓「寫檔的地方」跟「執行時的 cwd」是同一個乾淨的暫存目錄。
+
+    result_file：有給的話，會在暫存目錄被清掉之前讀回這個檔案，放在回傳的
+    "result_raw"（檔案不存在就是 None）。
     """
     timeout = _clamp_timeout(timeout_seconds)
+    result_raw = None
 
     with tempfile.TemporaryDirectory(prefix="coworkify-sandbox-") as tmpdir:
         args = build_args(tmpdir) if callable(build_args) else build_args
@@ -107,6 +117,18 @@ def run_sandboxed(build_args, *, shell: bool, timeout_seconds: Any) -> dict[str,
                 f"Timed out after {timeout}s. "
                 f"stdout so far: {_truncate((exc.stdout or ''))!r}"
             ) from exc
+        
+        # 必須在 with 裡面讀：離開這個區塊暫存目錄就被刪了
+        if result_file:
+            path = Path(tmpdir) / result_file
+            if path.exists():
+                size = path.stat().st_size
+                if size > _MAX_RESULT_BYTES:
+                    raise RuntimeError(
+                        f"Return value is {size // 1024}KB, over the "
+                        f"{_MAX_RESULT_BYTES // 1024}KB limit — return less data from main()"
+                    )
+                result_raw = path.read_text(encoding="utf-8")
 
     stdout = _truncate(proc.stdout or "")
     stderr = _truncate(proc.stderr or "")
@@ -131,7 +153,10 @@ def run_sandboxed(build_args, *, shell: bool, timeout_seconds: Any) -> dict[str,
             f"Exited with code {proc.returncode}.\nstdout: {stdout}\nstderr: {stderr}"
         )
 
-    return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
+    output = {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
+    if result_file:
+        output["result_raw"] = result_raw
+    return output
 
 def _write_inputs(tmpdir: str, inputs: Any) -> None:
     """上游資料走檔案，不貼進原始碼——貼字串會毀掉型別（JSON 的 true/false/null

@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME, shell_command
+from app.tasks.sandbox import DEFAULT_TIMEOUT_SECONDS, python_command, run_sandboxed, INPUTS_FILENAME, SCRIPT_FILENAME, shell_command, RESULT_FILENAME
 
 #define business logics
 
@@ -263,7 +263,6 @@ def handle_notify(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"delivered": True, "status_code": response.status_code, "title": embed["title"]}
 
 
-_PY_RESULT_MARKER = "__COWORKIFY_RESULT__"
 
 # 附加在使用者程式碼後面的驅動程式碼：如果使用者定義了一個叫 main 的函式，
 # 就呼叫它、把回傳值序列化成 JSON 印到一行特殊標記後面。沒有 main 的話這段
@@ -312,7 +311,8 @@ if callable(_main):
         _serialized = json.dumps(_result)
     except (TypeError, ValueError):
         _serialized = json.dumps(str(_result))
-    print({_PY_RESULT_MARKER!r} + _serialized)
+    with open(os.path.join(_dir, {RESULT_FILENAME!r}), "w", encoding="utf-8") as _out:
+        _out.write(_serialized)
 """
 
 
@@ -337,20 +337,12 @@ def handle_python(payload: Dict[str, Any]) -> Dict[str, Any]:
         ),
         shell=False,
         timeout_seconds=payload.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+        result_file=RESULT_FILENAME,
     )
 
-    value = None
-    clean_lines = []
-    for line in result["stdout"].splitlines():
-        if line.startswith(_PY_RESULT_MARKER):
-            try:
-                value = json.loads(line[len(_PY_RESULT_MARKER):])
-            except ValueError:
-                pass
-        else:
-            clean_lines.append(line)
-    result["stdout"] = "\n".join(clean_lines)
-    result["value"] = value
+    # 沒定義 main() 時 runner 不會寫檔，value 就是 None
+    raw = result.pop("result_raw", None)
+    result["value"] = json.loads(raw) if raw is not None else None
     return result
 
 

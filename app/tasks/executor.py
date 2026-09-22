@@ -1,3 +1,4 @@
+from app.schemas.workflow import WorkflowStepResponse
 import copy
 import re
 import time
@@ -247,7 +248,23 @@ def collect_upstream_inputs(db, step: WorkflowStep, all_steps: list[WorkflowStep
     # 只收有 step_key 的祖先。for_each 展開出來的 task 沒有 key（同一個模板展開成 N 份，
     # 用 key 會互相覆蓋）；以前退回用 task id 當 key，inputs 裡就混進一堆使用者不可能
     # 知道的 UUID。展開結果改由下面的 reduce 分支以「依項目排序的 list」提供。
-    dep_ids = [tid for tid in _ancestor_task_ids(all_steps, step) if key_by_task.get(tid)]
+    ancestor_ids = _ancestor_task_ids(all_steps, step)
+    if step.reduce_of_key:
+        # 展開成 0 項時，reduce 的 depends_on 是空的，順著它走不到任何祖先——
+        # 連 for_each 的來源與更上游的 input 都拿不到。改從那組 for_each 的來源往上走。
+        template = db.scalars(
+            select(WorkflowStepTemplate).where(
+                WorkflowStepTemplate.workflow_id == step.workflow_id,
+                WorkflowStepTemplate.key == step.reduce_of_key,
+            )
+        ).first()
+        if template:
+            source_id = str(template.for_each_task_id)
+            source_step = next((s for s in all_steps if str(s.task_id) == source_id), None)
+            extra = [source_id] + (_ancestor_task_ids(all_steps, source_step) if source_step else [])
+            ancestor_ids += [tid for tid in extra if tid not in ancestor_ids]
+    
+    dep_ids = [tid for tid in ancestor_ids if key_by_task.get(tid)]
     if dep_ids:
         types = _task_types(db, dep_ids)
         for task_id, result in zip(dep_ids, collect_step_results(db, dep_ids)):
@@ -258,16 +275,28 @@ def collect_upstream_inputs(db, step: WorkflowStep, all_steps: list[WorkflowStep
     # reduce 的 depends_on 在 expand_dynamic_steps 裡就是照項目順序填的，所以這個 list
     # 的第 i 項一定對應 for_each 來源的第 i 項。沒有結果的項目保留 None，不壓縮，
     # 否則兩邊 zip 起來會錯位。
-    if step.reduce_of_key and step.depends_on:
+    if step.reduce_of_key:
         member_ids = list(step.depends_on)
-        types = _task_types(db, member_ids)
-        inputs[step.reduce_of_key] = [
-            _unwrap_result(types.get(task_id), result)
-            for task_id, result in zip(member_ids, collect_step_results(db, member_ids))
-        ]
+        if member_ids:
+            types = _task_types(db, member_ids)
+            inputs[step.reduce_of_key] = [
+                _unwrap_result(types.get(task_id), result)
+                for task_id, result in zip(member_ids, collect_step_results(db, member_ids))
+            ]
+        else:
+            inputs[step.reduce_of_key] = []
 
     return inputs
 
+def _inject_step_inputs(db, step: WorkflowStep, task: Task, all_step: list[WorkflowStep]) -> None:
+    """
+    python / shell 派送前，把上游資料放進 payload.inputs（handler 會寫成 sandbox 的 inputs.json）。
+
+    凡是會派送 workflow 裡 task 的地方都要呼叫它。之前只有 advance_workflow 會做，
+    for_each 展開成 0 項時由 expand_dynamic_steps 直接派送的 reduce 步驟就拿到空的 inputs。
+    """
+    if task.task_type in ("python", "shell"):
+        task.payload = {**task.payload, "inputs": collect_upstream_inputs(db, step, all_step)}
 
 def _condition_result(db, task_id) -> bool | None:
     """condition task 最新一筆成功結果的 passed 欄位；不是 condition 或還沒有結果就回 None。"""
@@ -338,6 +367,9 @@ def advance_workflow(db, task: Task):
                         )
                         db.commit()
 
+                    _inject_step_inputs(db, s, next_task, all_steps)
+                    db.commit()
+
                     if next_task.task_type in ("python", "shell"):
                         # 上游資料走 payload.inputs（handler 會寫成 sandbox 裡的
                         # inputs.json），不再靠字串模板貼進原始碼
@@ -372,12 +404,17 @@ def advance_workflow(db, task: Task):
         reason = "上游任務失敗，已取消"
         _cascade_cancel(db, all_steps, [task.id], reason)
 
+        orphan_reduces = []
         for s in all_steps:
             if s.reduce_of_key and not s.depends_on:
                 t = db.get(Task, s.task_id)
                 if t and t.status == TaskStatus.PENDING:
                     t.status = TaskStatus.CANCELLED
                     notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
+                    orphan_reduces.append(s.task_id)
+        # reduce 步驟的下游也要一起取消，否則會永遠停在 pending
+        if orphan_reduces:
+            _cascade_cancel(db, all_steps, orphan_reduces, reason)
 
         workflow.status = WorkFlowStatus.FAILED
         db.commit()
@@ -402,12 +439,14 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
     affected = _downstream_task_ids(all_steps, failed_ids)
 
     # reduce 步驟在上游展開之前 depends_on 是空的，走訪走不到它，但失敗時會被
-    # advance_workflow 另外取消。這裡要一起收回來，否則它會永遠停在 CANCELLED。
+    # advance_workflow 另外取消（連同它的下游）。這裡要一起收回來，否則會永遠停在 CANCELLED。
+    orphan_reduces = set()
     for s in all_steps:
         if s.reduce_of_key and not s.depends_on:
             t = tasks_by_id.get(s.task_id)
             if t and t.status == TaskStatus.CANCELLED:
-                affected.add(s.task_id)
+                orphan_reduces.add(s.task_id)
+    affected |= orphan_reduces | _downstream_task_ids(all_steps, orphan_reduces)
 
     # 分支已經判定出局的步驟不該被喚醒：它的 condition 已經成功、結果也不符，
     # 重跑上游不會改變那個判定（condition 不會再跑一次去觸發取消）。
@@ -780,6 +819,11 @@ def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
             # 否則這個 task 會永遠停在 PENDING，workflow 也永遠不會 SUCCESS
             reduce_task = db.get(Task, ws.task_id)
             reduce_task.payload = render_reduce_payloads(reduce_task.payload, [])
+            # 這條路徑不經過 advance_workflow，input 要在這裡補上
+            all_steps = db.scalars(
+                select(WorkflowStep).where(WorkflowStep.workflow_id == workflow.id)
+            ).all()
+            _inject_step_inputs(db, ws, reduce_task, all_steps)
             ready_reduce_tasks.append(reduce_task)
 
     db.commit()
