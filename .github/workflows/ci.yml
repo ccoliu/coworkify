@@ -19,19 +19,19 @@ jobs:
     name: Backend tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     services:
-    postgres:
-      image: postgres:15-alpine
-      env:
-        POSTGRES_USER: ci
-        POSTGRES_PASSWORD: ci
-        POSTGRES_DB: ci
-      ports:
-        - 5432:5432
-      options: >-
-        --health-cmd "pg_isready -U ci -d ci"
-        --health-interval 5s
-        --health-timeout 5s
-        --health-retries 10
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     strategy:
       fail-fast: false
       matrix:
