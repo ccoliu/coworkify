@@ -18,13 +18,27 @@ jobs:
   backend-tests:
     name: Backend tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    services:
+    postgres:
+      image: postgres:15-alpine
+      env:
+        POSTGRES_USER: ci
+        POSTGRES_PASSWORD: ci
+        POSTGRES_DB: ci
+      ports:
+        - 5432:5432
+      options: >-
+        --health-cmd "pg_isready -U ci -d ci"
+        --health-interval 5s
+        --health-timeout 5s
+        --health-retries 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
     env:
-      # Placeholders only: the unit tests import modules that read these at
-      # import time, but never open a real connection, so no services needed.
+      # executor 整合測試會連這台 Postgres（上面的 service），另建 ci_test 資料庫；
+      # Redis 仍只是佔位——executor 在 import 時建立 client，但測試把推播換掉了，不會真的連線
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       REDIS_URL: redis://localhost:6379/0
     steps:
