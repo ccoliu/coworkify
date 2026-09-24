@@ -103,7 +103,16 @@ docker-compose up -d --build
 
 第一次進去先在登入頁註冊一組帳號，然後看側邊欄的 **Getting started**（http://localhost:5173/getting-started ）——那裡有一個從建立到執行的完整例子，也是最快上手的方式。
 
-### 3. 啟動 Locust 壓力測試
+### 3. 執行測試
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
+```
+在主機上執行（不是在容器裡）。大部分測試不需要任何外部服務；`tests/test_executor_workflow.py` 是 executor 的整合測試，會連 `.env` 的 `DATABASE_URL` 那台 Postgres，另建一個 `<POSTGRES_DB>_test` 資料庫，把 workflow 的派送、`inputs` 組裝、for_each / reduce（包含展開成 0 項）、分支取消、失敗與續跑整條走過一遍。Celery 派送被換成記錄器，不需要 worker 和 Redis。連不上資料庫時這組測試會 skip，加 `-rs` 可以看到原因；要改連別台就設 `TEST_DATABASE_URL`。
+
+> 主機上如果另外裝了原生 Postgres 並佔用 5432，`localhost:5432` 會連到那一台，錯誤訊息是 `password authentication failed`。這時把 `.env` 的 `POSTGRES_PORT` 和 `DATABASE_URL` 都改成別的 port（例如 5433），再執行 `docker compose up -d postgres`。
+
+### 4. 啟動 Locust 壓力測試
 ```bash
 locust -f tests/locustfile.py --host http://localhost:8000
 ```
