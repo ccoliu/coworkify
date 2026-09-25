@@ -50,7 +50,8 @@
 | `shell` | 在受限的 subprocess 裡執行一段 shell 指令。上游結果放在工作目錄的 `inputs.json`，取單一值用 `$(./get_input input_1.price)` |
 | `http_request` | 發送一個 HTTP 請求，會擋掉指向內網或 cloud metadata endpoint 的目標 |
 | `condition` | 評估一個條件並回傳 `passed=true/false`，本身永遠成功；下游用 `branch_of` + `branch_when` 指向它來實現 if/else 分支 |
-| `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
+| `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。填了 `output_fields`（例如 `{"fixable": "boolean", "effort": ["small", "large"]}`）會改用 structured output，結果直接是那個物件，下游可以 `inputs["judge"]["fixable"]` 取值。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
+| `notify` | 送一則 Discord webhook 通知（標題、內文、連結、等級決定顏色），通常放在 workflow 最後一步。webhook URL 預設讀 worker 的 `DISCORD_WEBHOOK_URL` 環境變數——它等同密碼，不建議寫進 workflow 定義 |
 > 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。
 >
 > 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
@@ -80,6 +81,37 @@ Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況�
 ![Workflow run view](<workflow-run.png>)
 
 上圖是一條巢狀分支的 workflow：`condition_1` 走 `false` 進到 `python_2`，`condition_2` 走 `true` 進到 `shell_2`；沒被選中的 `shell_1`、`shell_3` 連同下游標記為 `cancelled`，整條 workflow 仍是 `Success`——分支沒命中是預期結果，不是失敗。
+
+---
+
+## 實戰案例：GitHub issue 分流流水線
+
+一條每小時自動執行的流水線：抓 [apache/airflow](https://github.com/apache/airflow) 過去一小時新開的 issue，讓本機的 LLM 逐條判斷「好不好修」，分級後推到 Discord。熱門專案的新 issue 很快就會被人認領，這條流水線的用途是在別人之前先看到值得接的那幾條。
+
+![Issue triage pipeline](<pipeline-canvas.png>)
+
+| 步驟 | 類型 | 做什麼 |
+| :--- | :--- | :--- |
+| `input_1` | `input` | 這次執行的參數：`repo`、`hours`（時間窗長度）、`max_issues` |
+| `window` | `python` | 算出對齊整點的時間窗，組出 GitHub Search API 的查詢網址 |
+| `fetch` | `http_request` | 呼叫 Search API |
+| `shape` | `python` | 整理成 issue list，並先用程式判斷「是否已經有人在處理」：作者在 issue 表單勾了願意送 PR，或 Timeline API 查得到會關閉它的 PR |
+| `judge` | `agent_step` | `for_each: shape`，每條 issue 並行一個 LLM 判斷，structured output 回傳固定欄位 |
+| `digest` | `python` | `reduce_of: judge`，把 issue 與判斷結果依序配對，分成 🟢 / 🟡 / ⚪ 三級並組成訊息 |
+| `condition_3` | `condition` | `digest` 的 `has_news` 為真才往下走 |
+| `notify` | `notify` | 送出 Discord 通知 |
+
+幾個設計決定：
+
+- **模型只回答事實，分級由程式決定。** `judge` 的 `output_fields` 只問內文寫了什麼：是不是功能提案、有沒有重現步驟、有沒有指出具體原因、修改範圍多大。「可以直接動手」還是「要先查原因」是 `digest` 裡幾行 `if` 決定的。9B 的本機模型直接回答「好不好修」時判斷飄忽，回答「內文有沒有 stack trace」就穩定得多；分級規則要調整時也只要改程式，不必重寫 prompt 再重新驗證模型的行為。
+- **已經有人認領的 issue 不交給模型判斷。** 作者勾選願意送 PR、或已經有會關閉它的 PR，一律歸到 ⚪，優先於模型的結果——這些是查得到的事實，不需要猜。
+- **時間窗對齊整點。** 每次查 `[整點 - hours, 整點)`，查詢上界減一秒，避開 GitHub 範圍查詢兩端都包含的行為。就算排程晚了幾分鐘觸發，相鄰兩次的時間窗仍然首尾相接，不重複也不遺漏。
+- **沒有新 issue 也照常收斂。** `shape` 回傳空 list 時 `judge` 展開成 0 項，`digest` 仍會執行並回傳 `has_news: false`，由 `condition_3` 擋下通知——實際上大部分時段都走這條路。
+- **資料傳遞不經字串模板。** `digest` 直接 `zip(inputs["shape"], inputs["judge"])`；reduce 拿到的結果依項目順序排好，跟各 issue 實際判斷完成的先後無關。
+
+![Discord notification](<pipeline-discord.png>)
+
+模型是透過 LM Studio 在本機執行的 `qwen/qwen3.5-9b`，走 OpenAI 相容 API（`AGENT_STEP_DEFAULT_MODEL=openai:qwen/qwen3.5-9b`、`OPENAI_BASE_URL` 指向 LM Studio），由 `worker-agent` 執行。排程 cron 是 `5 * * * *`，也就是每小時第 5 分鐘。從 2026-09-22 開始持續運行到 2026-09-24，共執行 55 次：49 次沒有新 issue、6 次送出通知，總共判斷了 17 條 issue。另有 2 次失敗，原因是 LM Studio 把模型卸載了，`judge` 重試耗盡，流水線本身沒有問題；這種情況修好之後可以用 `/retry` 從失敗點續跑。
 
 ---
 
