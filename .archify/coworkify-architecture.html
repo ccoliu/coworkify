@@ -4959,8 +4959,8 @@
       </div>
     </div>
 
-    <script id="archify-guided-views-data" type="application/json">[{"id":"task-lifecycle","label":"任務建立與執行","focus":["users","frontend","api","redis","worker","db"],"note":"使用者透過前端建立任務,FastAPI 寫入 PostgreSQL 並派送至 Redis 佇列,Celery Worker 消費後執行並回寫結果。"},{"id":"realtime-push","label":"即時狀態推播","focus":["worker","redis","api","frontend"],"note":"Worker 執行完成後透過 Redis Pub/Sub 發布狀態,API 訂閱後以 WebSocket 即時推播給前端,無需輪詢。"},{"id":"auth-and-limit","label":"身份驗證與限流","focus":["frontend","api","auth","redis"],"note":"所有 /tasks、/workflows、/schedules 端點皆需 JWT,並依登入身份套用 Redis 滑動窗口限流。"},{"id":"cron-scheduling","label":"週期性排程","focus":["beat","redis","worker","db"],"note":"Celery Beat 每 60 秒送出檢查任務,Worker 消費後讀取到期的 WorkflowSchedule,建立新 workflow 並派送根節點。"},{"id":"dynamic-fanout","label":"動態 Fan-out","focus":["worker","db"],"note":"某節點成功且結果為一份 list 時,Worker 依 list 內每個項目各自展開成真正的下游任務(for_each)。"}]</script>
-    <script id="archify-source-evidence-data" type="application/json">{"schemaVersion":1,"verified":true,"repository":{"url":"https://github.com/ccoliu/coworkify","revision":"116d909606693f174e49d89f5ce77cb88227c906","shortRevision":"116d909"},"referenceCount":9,"nodes":{"locust":[{"path":"tests/locustfile.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/tests/locustfile.py"}],"frontend":[{"path":"frontend/src/App.tsx","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/frontend/src/App.tsx"}],"api":[{"path":"app/main.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/main.py"}],"auth":[{"path":"app/core/security.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/core/security.py"},{"path":"app/core/rate_limit.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/core/rate_limit.py"}],"beat":[{"path":"app/tasks/scheduler.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/tasks/scheduler.py"},{"path":"app/core/cron.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/core/cron.py"}],"worker":[{"path":"app/tasks/handler.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/tasks/handler.py"},{"path":"app/tasks/executor.py","href":"https://github.com/ccoliu/coworkify/blob/116d909606693f174e49d89f5ce77cb88227c906/app/tasks/executor.py"}]}}</script>
+    <script id="archify-guided-views-data" type="application/json">[{"id":"run-path","label":"建立與執行一次 run","focus":["frontend","api","db","redis","worker"],"note":"使用者在畫布上建立 workflow 定義並執行；API 把 run 與 task 寫進 PostgreSQL，派送根節點到 Redis，Worker 執行後由 executor 組好下游的 inputs 再派送。"},{"id":"agent-path","label":"LLM 步驟","focus":["redis","worker_agent","llm","db"],"note":"agent_step 走專屬的 agent_step 佇列，只有裝了 Codoctopus 的 worker-agent 會消費；模型透過 OpenAI 相容 API 呼叫本機 LM Studio，以 structured output 回傳固定欄位。"},{"id":"realtime-push","label":"即時狀態推播","focus":["worker","redis","api","frontend"],"note":"Worker 透過 Redis Pub/Sub 發布狀態變更，API 訂閱後以 WebSocket 推給前端，畫布節點即時上色，無需輪詢。"},{"id":"auth-and-limit","label":"身份驗證與限流","focus":["frontend","api","auth","redis"],"note":"所有 /tasks、/definitions、/workflows、/schedules 端點都需要 JWT，並依登入身份套用 Redis 滑動窗口限流。"},{"id":"cron-scheduling","label":"週期性排程","focus":["beat","redis","worker","db","external"],"note":"Celery Beat 每 60 秒檢查到期的排程，依定義當下的內容建立新的 run——例如每小時抓 GitHub issue、交給 LLM 分級、推到 Discord 的那條流水線。"}]</script>
+    <script id="archify-source-evidence-data" type="application/json">{"schemaVersion":1,"verified":true,"repository":{"url":"https://github.com/ccoliu/coworkify","revision":"992e494b1b11a2cfbfcb8628d013fc08419459d9","shortRevision":"992e494"},"referenceCount":13,"nodes":{"frontend":[{"path":"frontend/src/App.tsx","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/frontend/src/App.tsx"},{"path":"frontend/src/features/workflows/validateGraph.ts","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/frontend/src/features/workflows/validateGraph.ts"}],"api":[{"path":"app/main.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/main.py"},{"path":"app/api/workflows.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/api/workflows.py"}],"auth":[{"path":"app/core/security.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/core/security.py"},{"path":"app/core/rate_limit.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/core/rate_limit.py"}],"db":[{"path":"app/models/workflow.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/models/workflow.py"}],"beat":[{"path":"app/tasks/scheduler.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/tasks/scheduler.py"}],"redis":[{"path":"app/celery_app.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/celery_app.py"}],"worker":[{"path":"app/tasks/executor.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/tasks/executor.py"},{"path":"app/tasks/handler.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/tasks/handler.py"},{"path":"app/tasks/sandbox.py","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/app/tasks/sandbox.py"}],"worker_agent":[{"path":"Dockerfile.agent","href":"https://github.com/ccoliu/coworkify/blob/992e494b1b11a2cfbfcb8628d013fc08419459d9/Dockerfile.agent"}]}}</script>
     <script id="archify-i18n-data" type="application/json">{"locale":"en","messages":{"viewer.kind.frontend":"Frontend","viewer.kind.backend":"Backend","viewer.kind.database":"Database","viewer.kind.cloud":"Cloud","viewer.kind.security":"Security","viewer.kind.messagebus":"Message bus","viewer.kind.external":"External","viewer.kind.neutral":"Neutral","viewer.kind.node":"Node","viewer.kind.start":"Start","viewer.kind.active":"Active","viewer.kind.waiting":"Waiting","viewer.kind.decision":"Decision","viewer.kind.success":"Success","viewer.kind.failure":"Failure","viewer.toolbar.actions":"Diagram actions","viewer.theme.toggle.title":"Toggle theme (T)","viewer.theme.toggle":"Toggle color theme","viewer.theme.dark":"Dark","viewer.theme.light":"Light","viewer.preset.choose.title":"Choose visual style (S cycles)","viewer.preset.choose":"Choose visual style","viewer.preset.style":"Style","viewer.preset.menu":"Visual style","viewer.preset.identity":"Visual identity","viewer.preset.cycles":"S cycles","viewer.preset.classic":"Classic","viewer.preset.classic.short":"Classic","viewer.preset.classic.hint":"Stable technical default","viewer.preset.flow":"Signal Flow","viewer.preset.flow.short":"Flow","viewer.preset.flow.hint":"Motion-forward presentation","viewer.preset.blueprint":"Blueprint","viewer.preset.blueprint.hint":"Engineering review","viewer.preset.editorial":"Editorial","viewer.preset.editorial.hint":"Publication and launch notes","viewer.preset.badge.signalFlow":"SIGNAL FLOW","viewer.preset.badge.blueprint":"BLUEPRINT / REV 01","viewer.preset.badge.editorial":"EDITORIAL / FIELD NOTE","viewer.preset.badge.editorialPlate":"ARCHIFY / PLATE 04","viewer.preset.current":"Visual style: {style}. Choose visual style","viewer.motion.live":"Live","viewer.motion.still":"Still","viewer.motion.pause":"Pause motion","viewer.motion.resume":"Resume motion","viewer.motion.reduced":"Motion paused by reduced-motion preference","viewer.motion.hidden":"Motion paused while this page is hidden","viewer.motion.yielding":"Pause motion; currently yielding to {owner}","viewer.motion.yielding.title":"Live preview enabled · yielding to {owner}","viewer.owner.story":"the guided story","viewer.owner.chapter":"the active chapter","viewer.owner.chapterPreview":"the chapter delta preview","viewer.owner.handoff":"the chapter handoff","viewer.owner.route":"Route Probe","viewer.owner.lens":"Semantic Lens","viewer.owner.relationship":"Relationship Preview","viewer.owner.intent":"Intent Trace","viewer.owner.focus":"semantic focus","viewer.owner.legend":"legend preview","viewer.owner.reader":"reader interaction","viewer.present.enter":"Enter presentation stage","viewer.present.enter.title":"Presentation stage (F)","viewer.present.exit":"Exit presentation stage","viewer.present.exit.title":"Exit presentation stage (F or Escape)","viewer.present.present":"Present","viewer.present.exit.label":"Exit","viewer.export.button":"Export","viewer.export.button.title":"Export diagram (E)","viewer.export.diagram":"Export diagram","viewer.export.menu":"Export","viewer.export.subtitle":"Portable, clean outputs","viewer.export.share":"Share","viewer.export.shareCard":"Share Card","viewer.export.routeShareCard":"Route Share Card","viewer.export.reachShareCard":"Reach Share Card","viewer.export.copyShareCard":"Copy Share Card","viewer.export.copyDiagram":"Copy diagram","viewer.export.clipboardPng":"PNG to clipboard","viewer.export.raster":"Raster images","viewer.export.image":"Image","viewer.export.lossless":"Lossless image","viewer.export.compact":"Compact image","viewer.export.modern":"Modern image","viewer.export.vectorMotion":"Vector and motion","viewer.export.vectorMotion.heading":"Vector \u0026 motion","viewer.export.editable":"Editable vector","viewer.export.motion6s":"6s motion","viewer.export.unsupported":"Not supported by this browser","viewer.export.clipboardUnsupported":"Clipboard image write not supported by this browser","viewer.export.clipboardUnsupported.period":"Clipboard image write not supported by this browser.","viewer.export.clipboardUnsupported.short":"Clipboard image write not supported in this browser.","viewer.export.motionUnavailable":"Motion capture unavailable in this browser","viewer.export.webmUnavailable":"WebM unavailable in this browser","viewer.export.failed":"Export failed: {message}","viewer.export.unknownVariant":"Unknown Share Card variant: {variant}","viewer.export.routeRequired":"Trace a route before exporting a Route Share Card","viewer.export.reachRequired":"Trace authored reach before exporting a Reach Share Card","viewer.export.unknown":"unknown","viewer.export.routeFailed":"Route Share Card export failed: {message}","viewer.export.reachFailed":"Reach Share Card export failed: {message}","viewer.export.copyFailed":"Copy failed: {message}","viewer.export.copiedPng":"Copied PNG to clipboard","viewer.export.copiedShare":"Copied Share Card","viewer.export.downloadedShare":"Downloaded Share Card","viewer.export.downloadedRoute":"Downloaded Route Share Card","viewer.export.downloadedReach":"Downloaded Reach Share Card","viewer.export.downloadedWebm":"Downloaded WebM","viewer.export.recording":"Recording 6 seconds of motion…","viewer.export.card.routeSummary.one":"Route: {source} → {target} · {count} directed hop","viewer.export.card.routeSummary.other":"Route: {source} → {target} · {count} directed hops","viewer.export.card.reachSummary":"Authored {direction} from {origin} · {nodes} · {links} · max {hops}","viewer.export.card.node.one":"{count} node","viewer.export.card.node.other":"{count} nodes","viewer.export.card.link.one":"{count} link","viewer.export.card.link.other":"{count} links","viewer.export.card.hop.one":"{count} hop","viewer.export.card.hop.other":"{count} hops","viewer.export.card.routeBadge":"ARCHIFY · ROUTE · {hops}","viewer.export.card.reachBadge":"ARCHIFY · {direction} REACH","viewer.export.card.defaultBadge":"ARCHIFY · {preset} · {theme}","viewer.export.direction.upstream":"Upstream","viewer.export.direction.downstream":"Downstream","viewer.export.error.canvasUnavailable":"Canvas unavailable for {label}","viewer.export.error.contextUnavailable":"2D canvas context unavailable for {label}","viewer.export.error.toBlobUnavailable":"canvas.toBlob unavailable for {label}","viewer.export.error.toBlobNull":"canvas.toBlob returned no data for {label}","viewer.export.error.variantsCombined":"Share Card variants cannot be combined","viewer.export.error.viewerState":"Share Card export could not remove temporary viewer state","viewer.export.error.routeState":"Route Card export could not preserve the resolved route safely","viewer.export.error.reachState":"Reach Card export could not preserve authored reach safely","viewer.export.error.webmRequirements":"WebM motion export requires a trace animation and browser MediaRecorder support","viewer.export.error.mediaRecorder":"MediaRecorder failed","viewer.export.error.emptyWebm":"MediaRecorder produced an empty WebM","viewer.export.error.webmBackground":"SVG background could not be loaded for WebM export","viewer.guided.region":"Guided diagram views","viewer.guided.previous":"Previous guided view","viewer.guided.previous.title":"Previous guided view ([)","viewer.guided.next":"Next guided view","viewer.guided.next.title":"Next guided view (])","viewer.guided.views":"Guided views","viewer.guided.explore":"Explore this system","viewer.guided.intro":"Step through curated paths without changing the source diagram.","viewer.guided.trail":"Story trail","viewer.guided.beat":"Beat","viewer.guided.nextBeat":"Next","viewer.guided.play":"Play guided story","viewer.guided.play.title":"Play guided story (P)","viewer.guided.pause":"Pause guided story","viewer.guided.pause.title":"Pause guided story (P)","viewer.guided.replay":"Replay guided story","viewer.guided.replay.title":"Replay guided story (P)","viewer.guided.playStory":"Play story","viewer.guided.pauseStory":"Pause","viewer.guided.replayStory":"Replay story","viewer.guided.motionUnavailable":"Story playback unavailable while motion is Still","viewer.guided.enableMotion":"Switch motion to Live to play the guided story","viewer.guided.selectBeatLink":"Select a Story Beat to copy its exact link","viewer.guided.copyMoment":"Copy moment","viewer.guided.momentCopied":"Moment link copied","viewer.guided.momentCopyFailed":"Could not copy story moment link","viewer.guided.copied":"Copied","viewer.guided.copyFailed":"Copy failed","viewer.guided.showAll":"Show all","viewer.guided.showAll.aria":"Show entire diagram","viewer.guided.chapters":"Story chapters","viewer.guided.storyTrail":"Story trail for {label}: {count} beats","viewer.guided.chapter.open":"Open chapter {index} of {total}: {label}, {count} stops","viewer.guided.chapter.current":"Current chapter {index} of {total}: {label}, {count} stops","viewer.guided.chapter.selectedNodes":"{count} selected nodes","viewer.guided.chapter.stops":"{count} stops","viewer.guided.chapter.stop.one":"{count} stop","viewer.guided.chapter.stop.other":"{count} stops","viewer.guided.chapter.current.title":"{label} — current chapter, {count} stops","viewer.guided.chapter.delta.expanded":"{stay} stay, {enter} enter, {leave} leave","viewer.guided.chapter.delta.aria":"Open chapter {index} of {total}: {label}. Chapter focus delta: {delta}","viewer.guided.chapter.delta.title":"{label} — {delta} chapter focus","viewer.guided.handoff":"{from} → {to} · via {label}","viewer.guided.share.chapter":"Chapter {index} / {total}","viewer.guided.share.initial":"Chapter 01 / 01","viewer.guided.share.default":"Guided chapter","viewer.guided.state.ready":"Ready","viewer.guided.state.playing":"Playing","viewer.guided.state.settled":"Settled","viewer.guided.state.paused":"Paused","viewer.guided.state.pinned":"Pinned","viewer.guided.state.still":"Still","viewer.guided.share.step":"Step {index} / {total} · {label}","viewer.guided.share.staticMoment":"{step} · Static moment","viewer.guided.share.complete":"{count} steps complete · {note}","viewer.guided.share.settled":"Path settled for reading.","viewer.guided.share.staticPath":"{count} steps · Static path","viewer.guided.share.ready":"{count} steps · Ready","viewer.guided.share.aria":"{state} chapter {index} of {total}: {label}. {beat}. {route}","viewer.guided.beat.start":"Beat {index} / {total} · {label} · starting point","viewer.guided.beat.forward":"Beat {index} / {total} · {from} → {to}","viewer.guided.beat.reverse":"Beat {index} / {total} · {from} → {to} · reverse authored link","viewer.guided.beat.multiple":"Beat {index} / {total} · {from} ⇄ {to} · {count} authored links","viewer.guided.beat.group":"Beat {index} / {total} · {from} · {to} · grouped · no direct link","viewer.guided.beat.aria.prefix":"Story beat {index} of {total}: {label}. ","viewer.guided.beat.aria.start":"Starting point.","viewer.guided.beat.aria.forward":"From {from} through one authored forward relationship.","viewer.guided.beat.aria.reverse":"From {from}; the authored relationship points from {to} to {from}.","viewer.guided.beat.aria.multiple":"From {from} through {count} authored relationships; shown without arbitrary motion.","viewer.guided.beat.aria.group":"Grouped from {from} with no direct authored relationship.","viewer.guided.caption.start":"Starting point","viewer.guided.caption.grouped":"Grouped transition · no direct authored link","viewer.guided.caption.more":" +{count} more","viewer.guided.caption.reverse":"Reverse authored relationship","viewer.guided.caption.relationships":"{count} authored relationships","viewer.guided.caption.relationship":"Authored relationship","viewer.guided.caption.direction":"authored direction: {from} → {to}","viewer.guided.caption.starting":"Authored starting point","viewer.guided.beatLink":"Copy link to current story moment: Beat {index} of {total}: {label}","viewer.guided.noStory":"This diagram has no authored guided story.","viewer.guide.eyebrow":"Diagram guide","viewer.guide.close":"Close diagram guide","viewer.guide.inspecting":"Inspecting compiled semantics","viewer.guide.actions":"Diagram exploration actions","viewer.guide.find":"Find any node","viewer.guide.find.hint":"Search labels, responsibilities, kinds, and stable IDs.","viewer.guide.route":"Trace a route","viewer.guide.route.aria":"Trace a directed route","viewer.guide.route.hint":"Ask how two semantic nodes connect in authored direction.","viewer.guide.map":"See the whole system","viewer.guide.map.hint":"Open Semantic Radar with a live viewport and stable nodes.","viewer.guide.lens":"Compare semantic kinds","viewer.guide.lens.hint":"Count roles, reveal their traffic, and compare direct authored links.","viewer.guide.story":"Play the guided story","viewer.guide.story.hint":"Walk the authored chapters and real relationships.","viewer.guide.present":"Enter Presentation Stage","viewer.guide.present.hint":"Give the live diagram the viewport without changing export.","viewer.guide.shortcuts":"Additional keyboard shortcuts","viewer.guide.shortcut.export":"Export","viewer.guide.shortcut.theme":"Theme","viewer.guide.shortcut.style":"Style","viewer.guide.shortcut.reset":"Reset","viewer.guide.shortcut.zoomIn":"Zoom in","viewer.guide.shortcut.zoomOut":"Zoom out","viewer.guide.shortcut.close":"Close","viewer.guide.facts":"{nodes} · {relationships} · {views}","viewer.guide.fact.node.one":"{count} semantic node","viewer.guide.fact.node.other":"{count} semantic nodes","viewer.guide.fact.relationship.one":"{count} relationship","viewer.guide.fact.relationship.other":"{count} relationships","viewer.guide.fact.view.one":"{count} guided view","viewer.guide.fact.view.other":"{count} guided views","viewer.guide.story.available.one":"Walk {count} authored chapter and its real relationships.","viewer.guide.story.available.other":"Walk {count} authored chapters and their real relationships.","viewer.guide.story.unavailable":"No authored guided story in this diagram.","viewer.guide.open":"Open diagram guide","viewer.guide.noStory":"This diagram has no authored guided story.","viewer.finder.title":"Find a node","viewer.finder.close":"Close node finder","viewer.finder.placeholder":"Search labels or IDs","viewer.finder.search":"Search diagram nodes","viewer.finder.results":"Diagram nodes","viewer.finder.empty":"No matching nodes","viewer.finder.result.focus":"Focus {label}","viewer.finder.result.routeStart":"Choose {label} as route start","viewer.finder.result.routeTarget":"Choose {label} as route destination, {links}","viewer.finder.status.empty":"No matching nodes","viewer.finder.status.count.one":"{count} matching node","viewer.finder.status.count.other":"{count} matching nodes","viewer.finder.noun.nodes":"nodes","viewer.finder.link.one":"{count} link","viewer.finder.link.other":"{count} links","viewer.finder.result.focus.one":"Focus {label}, {count} related connection","viewer.finder.result.focus.other":"Focus {label}, {count} related connections","viewer.finder.status.filtered":"{visible} of {available} {noun}","viewer.finder.status.all":"{available} {noun}","viewer.passport.eyebrow":"Semantic passport","viewer.passport.metadata":"Node metadata","viewer.passport.evidence":"Verified source evidence","viewer.passport.verified":"Verified source","viewer.passport.reach":"Authored reach","viewer.passport.reach.trace":"Trace authored reachability","viewer.passport.upstream":"Upstream","viewer.passport.downstream":"Downstream","viewer.passport.upstream.trace":"Trace upstream authored reachability","viewer.passport.downstream.trace":"Trace downstream authored reachability","viewer.passport.close":"Close semantic passport","viewer.passport.copy":"Copy link","viewer.passport.copy.focus":"Copy link to focused node","viewer.passport.relations":"Relations","viewer.passport.relations.show":"Show connected relationships","viewer.passport.relations.hide":"Hide connected relationships","viewer.passport.relations.list":"Connected relationships","viewer.passport.copyRelation":"Copy relation","viewer.passport.copyNode":"Copy node","viewer.passport.copyPinned":"Copy link to pinned relationship","viewer.passport.copySource":"Copy link to source node","viewer.passport.copy.focused.success":"Focused node link copied","viewer.passport.copy.pinned.success":"Pinned relationship link copied","viewer.passport.copy.focused.failed":"Could not copy focused node link","viewer.passport.copy.pinned.failed":"Could not copy pinned relationship link","viewer.passport.relationship.none":"No connected relationships","viewer.passport.relationship.count.one":"{count} relation","viewer.passport.relationship.count.other":"{count} relations","viewer.passport.relationship.show.one":"Show {count} connected relationship","viewer.passport.relationship.show.other":"Show {count} connected relationships","viewer.passport.relationship.summary":"{out} outgoing · {in} incoming{loops}","viewer.passport.relationship.loops":" · {count} loop","viewer.passport.relationship.explorer":"Direct relationship explorer","viewer.passport.relationship.help":"Use arrow keys to explore relationships. Press Enter or Space to pin details; Escape clears.","viewer.passport.relationship.loopsBack":"loops back","viewer.passport.relationship.connectsTo":"connects to","viewer.passport.relationship.connectsFrom":"connects from","viewer.passport.relationship.pinned":"Pinned relationship · {from} → {to} · {label}","viewer.passport.relationship.inspect":"Inspect relationship {index} of {total}: {from} to {to}, {label}. Press Enter for details.","viewer.passport.relationship.group.out":"Outgoing","viewer.passport.relationship.group.in":"Incoming","viewer.passport.relationship.group.loop":"Self loops","viewer.passport.relationship.row":"{group}: {relationship}, {neighbor}","viewer.passport.relationship.direction.out":"OUT →","viewer.passport.relationship.direction.in":"← IN","viewer.passport.relationship.direction.loop":"LOOP","viewer.passport.sourceCount.one":"{count} verified source reference","viewer.passport.sourceCount.other":"{count} verified source references","viewer.passport.sourceMarker":"SRC","viewer.passport.beacon.one":"{count} verified source; focus this node to inspect","viewer.passport.beacon.other":"{count} verified sources; focus this node to inspect","viewer.passport.repository.open":"Open verified repository revision {revision}","viewer.passport.source.open":"Open verified source {path} at revision {revision}","viewer.passport.source.openLink":"Open ↗","viewer.passport.reach.upstream.one":"Trace {count} upstream authored node","viewer.passport.reach.upstream.other":"Trace {count} upstream authored nodes","viewer.passport.reach.downstream.one":"Trace {count} downstream authored node","viewer.passport.reach.downstream.other":"Trace {count} downstream authored nodes","viewer.passport.reach.noUpstream":"No upstream authored nodes","viewer.passport.reach.noDownstream":"No downstream authored nodes","viewer.passport.reach.status":"{direction} · {nodes} nodes · {links} links · max {hops} hops","viewer.route.eyebrow":"Route probe","viewer.route.start":"Choose a start node","viewer.route.start.find":"Find start","viewer.route.start.find.aria":"Find a route start","viewer.route.copy":"Copy link","viewer.route.copy.aria":"Copy link to traced route","viewer.route.clear":"Clear","viewer.route.clear.aria":"Clear route probe","viewer.route.traced":"Traced route","viewer.route.pickTwo":"Pick two semantic nodes on the diagram","viewer.route.pickOne":"Pick a semantic node on the diagram","viewer.route.controls":"Route journey controls","viewer.route.previous":"Previous route position","viewer.route.play":"Play route journey","viewer.route.pause":"Pause route journey","viewer.route.replay":"Replay route journey","viewer.route.next":"Next route position","viewer.route.journey":"Journey","viewer.route.pause.label":"Pause","viewer.route.replay.label":"Replay","viewer.route.overview":"Overview","viewer.route.overview.aria":"Show complete route overview","viewer.route.instructions":"Choose the source, then the destination. Direction matters.","viewer.route.destination":"Choose a destination from {label}","viewer.route.destination.find":"Find target","viewer.route.destination.find.aria":"Find a reachable route destination","viewer.route.differentDestination":"Choose a different destination","viewer.route.distinct":"A route needs two distinct semantic nodes.","viewer.route.unreachable":"No directed route to {label}","viewer.route.unreachable.detail":"{target} is not reachable from {source}. Pick a highlighted destination.","viewer.route.start.instructions":"Select the source. The next step will reveal only directed destinations.","viewer.route.copy.success":"Traced route link copied","viewer.route.copy.failed":"Could not copy traced route link","viewer.route.position":"Route position {index} of {total}: {label}","viewer.route.step":"Step {index} of {total} · {phase} · {label}","viewer.route.motionRequired":"Automatic journey requires Live motion","viewer.route.trigger.clear":"Clear traced route","viewer.route.overview.status":"{nodes} · {hops} · shortest authored route","viewer.route.overview.node.one":"{count} node","viewer.route.overview.node.other":"{count} nodes","viewer.route.overview.hop.one":"{count} directed hop","viewer.route.overview.hop.other":"{count} directed hops","viewer.route.phase.playing":"Playing","viewer.route.phase.complete":"Complete","viewer.route.phase.inspecting":"Inspecting","viewer.route.destination.count.one":"{count} directed destination available. Pick a highlighted node.","viewer.route.destination.count.other":"{count} directed destinations available. Pick a highlighted node.","viewer.route.noOutgoing":"No outgoing route starts here. Clear and choose another source.","viewer.route.result.title":"{source} to {target}","viewer.route.finder.source.title":"Choose route start","viewer.route.finder.source.placeholder":"Search route sources","viewer.route.finder.source.empty":"No matching route sources","viewer.route.finder.source.results":"Nodes that can start a route","viewer.route.finder.source.noun":"route sources","viewer.route.finder.source.badge":"start","viewer.route.finder.target.title":"Destination from {label}","viewer.route.finder.target.placeholder":"Search reachable destinations","viewer.route.finder.target.empty":"No matching reachable destinations","viewer.route.finder.target.results":"Reachable route destinations","viewer.route.finder.target.noun":"reachable destinations","viewer.route.hop.one":"{count} hop","viewer.route.hop.other":"{count} hops","viewer.lens.eyebrow":"Semantic lens","viewer.lens.title":"Compare system roles","viewer.lens.close":"Close semantic lens","viewer.lens.instruction":"Choose up to two semantic kinds. One reveals its real traffic; two compare only direct authored relationships.","viewer.lens.kinds":"Semantic kinds","viewer.lens.choose":"Choose a kind to inspect its nodes and touching relationships.","viewer.lens.copy":"Copy link to semantic lens","viewer.lens.clear":"Clear semantic lens","viewer.lens.open":"Open semantic lens","viewer.lens.openActive":"Open active semantic lens","viewer.lens.legend":"Semantic legend","viewer.lens.legend.inspect.one":"Inspect {label}, {count} node","viewer.lens.legend.inspect.other":"Inspect {label}, {count} nodes","viewer.lens.kind.count.one":"{label}, {count} node","viewer.lens.kind.count.other":"{label}, {count} nodes","viewer.lens.compare.one":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationship","viewer.lens.compare.other":"{first} → {second}: {forward} · {second} → {first}: {reverse} · {count} direct relationships","viewer.lens.single":"{nodes} · {relationships} · connected peers remain visible","viewer.lens.node.one":"{count} {label} node","viewer.lens.node.other":"{count} {label} nodes","viewer.lens.relationship.one":"{count} touching relationship","viewer.lens.relationship.other":"{count} touching relationships","viewer.radar.title":"Semantic radar","viewer.radar.building":"Building overview","viewer.radar.openFull":"Open full semantic radar","viewer.radar.open":"Open radar","viewer.radar.close":"Close semantic radar","viewer.radar.surface":"Diagram overview. Click a node to focus it, or use arrow keys to pan.","viewer.radar.click":"Click node","viewer.radar.drag":"Drag to pan","viewer.radar.space":"Semantic radar needs more MAP space.","viewer.radar.nodes":"Semantic diagram radar nodes","viewer.radar.focus":"Focus {label} from Semantic Radar","viewer.radar.status":"{count} nodes · {viewport}","viewer.radar.fullMap":"{count} nodes · full map","viewer.radar.compacted":"Radar compacted to avoid covering the Semantic Passport or MAP controls.","viewer.radar.cancelWaiting":"Cancel semantic radar waiting for more MAP space","viewer.radar.needsSpace":"Semantic radar needs more visible MAP space","viewer.radar.viewport.full":"full map","viewer.radar.viewport.width":"{percent}% width","viewer.radar.viewport.scale":"{percent}% viewport","viewer.nav.controls":"Diagram view controls","viewer.nav.route":"Trace a directed route","viewer.nav.route.title":"Trace route (R)","viewer.nav.route.short":"PATH","viewer.nav.radar":"Open semantic radar","viewer.nav.radar.title":"Semantic radar (M)","viewer.nav.radar.short":"MAP","viewer.nav.lens":"Open semantic lens","viewer.nav.lens.title":"Semantic lens (L)","viewer.nav.lens.short":"LENS","viewer.nav.find":"Find a node","viewer.nav.find.title":"Find a node (/)","viewer.nav.guide":"Open diagram guide","viewer.nav.guide.title":"Diagram guide (?)","viewer.nav.zoomOut":"Zoom out","viewer.nav.zoomOut.title":"Zoom out (-)","viewer.nav.reset":"Reset diagram view","viewer.nav.reset.title":"Reset view (0)","viewer.nav.read":"READ","viewer.nav.zoomIn":"Zoom in","viewer.nav.zoomIn.title":"Zoom in (+)","viewer.nav.camera":"{hint}. Reset diagram view","viewer.nav.camera.title":"{semantic}{hint} · reset view (0)","viewer.nav.camera.semantic":"Semantic camera active · ","viewer.nav.level.map":"MAP","viewer.nav.level.read":"READ","viewer.nav.level.full":"FULL","viewer.nav.level.auto":"AUTO","viewer.nav.detail.map":"Zoom in to reveal relationship labels and node context","viewer.nav.detail.read":"Zoom in again to reveal tags and annotations","viewer.nav.detail.full":"Full diagram detail","viewer.intent.summary":"{label}. {out} outgoing, {in} incoming{loops}. {total} connections. Press Enter for details.","viewer.intent.loops":", {count} self loop","viewer.common.copied":"Copied","viewer.common.copyFailed":"Copy failed","viewer.common.copyLink":"Copy link","viewer.common.clear":"Clear","viewer.common.close":"Close"}}</script>
     <div class="guided-views no-print" id="guided-views" hidden aria-label="Guided diagram views">
       <button id="guided-view-prev" type="button" aria-label="Previous guided view" title="Previous guided view ([)">&#8592;</button>
@@ -5004,7 +5004,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / PLATE 04">
-      <svg viewBox="0 0 1380 596" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1380 532" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Coworkify 系統架構圖</title>
         <desc id="archify-diagram-description">An architecture diagram generated by Archify.</desc>
         <!-- Definitions -->
@@ -5030,224 +5030,233 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Docker Compose 服務網路" x="250" y="70" width="1090" height="458" rx="12" class="c-region" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Docker Compose 服務網路" x="10" y="70" width="1080" height="394" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="JWT 保護範圍 (API 端點)" x="590" y="70" width="230" height="294" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="JWT 保護範圍" x="300" y="70" width="230" height="254" rx="8" class="c-security-group" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="users" data-edge-to="frontend" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="user-to-ui" data-composition-points="180,312;280,312" d="M 180 312 L 280 312" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="frontend" data-edge-to="api" data-edge-label="HTTP + WebSocket" data-edge-key="1" data-edge-id="ui-api" data-composition-points="450,305;620,305" d="M 450 305 L 620 305" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="api" data-edge-to="auth" data-edge-label="JWT 驗證 + 限流檢查" data-edge-key="2" data-edge-id="api-uses-auth" data-composition-points="705,280;705,164" d="M 705 280 L 705 164" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="auth" data-edge-to="redis" data-edge-label="滑動窗口計數" data-edge-key="3" data-edge-id="auth-rate-redis" data-composition-points="790,132;845,132;845,312;900,312" d="M 790 132 L 837 132 Q 845 132 845 140 L 845 304 Q 845 312 853 312 L 900 312" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="api" data-edge-to="db" data-edge-label="寫入任務 / Workflow 中繼資料" data-edge-key="4" data-edge-id="api-write-db" data-composition-points="705,344;705,444" d="M 705 344 L 705 444" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="api" data-edge-to="redis" data-edge-label="派送任務至佇列" data-edge-key="5" data-edge-id="api-enqueue-redis" data-composition-points="790,312;900,312" d="M 790 312 L 900 312" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="redis" data-edge-to="worker" data-edge-label="消費任務" data-edge-key="6" data-edge-id="redis-to-worker" data-composition-points="1060,305;1084,305;1084,321;1116,321;1116,298;1140,298" d="M 1060 305 L 1076 305 Q 1084 305 1084 313 L 1084 313 Q 1084 321 1092 321 L 1108 321 Q 1116 321 1116 313 L 1116 306 Q 1116 298 1124 298 L 1140 298" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="worker" data-edge-to="db" data-edge-label="更新狀態、動態展開 for_each 分支" data-edge-key="7" data-edge-id="worker-update-db" data-composition-points="1140,326;1116,326;1116,476;785,476" d="M 1140 326 L 1124 326 Q 1116 326 1116 334 L 1116 468 Q 1116 476 1108 476 L 785 476" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="worker" data-edge-to="redis" data-edge-label="發布狀態 / 派送下游任務" data-edge-key="8" data-edge-id="worker-publish-redis" data-composition-points="1140,312;1116,312;1116,335;1084,335;1084,319;1060,319" d="M 1140 312 L 1124 312 Q 1116 312 1116 320 L 1116 327 Q 1116 335 1108 335 L 1092 335 Q 1084 335 1084 327 L 1084 327 Q 1084 319 1076 319 L 1060 319" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="redis" data-edge-to="api" data-edge-label="Pub/Sub 推播狀態" data-edge-key="9" data-edge-id="redis-pubsub-api" data-composition-points="900,312;790,312" d="M 900 312 L 790 312" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="locust" data-edge-to="api" data-edge-label="壓力測試請求" data-edge-key="10" data-edge-id="locust-to-api" data-composition-points="180,474;596,474;596,319;620,319" d="M 180 474 L 588 474 Q 596 474 596 466 L 596 327 Q 596 319 604 319 L 620 319" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="beat" data-edge-to="redis" data-edge-label="每 60 秒送出到期檢查任務" data-edge-key="11" data-edge-id="beat-to-redis" data-composition-points="985,164;985,188;1001,188;1001,256;980,256;980,280" d="M 985 164 L 985 180 Q 985 188 993 188 L 993 188 Q 1001 188 1001 196 L 1001 248 Q 1001 256 993 256 L 988 256 Q 980 256 980 264 L 980 280" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="frontend" data-edge-to="api" data-edge-label="REST + WebSocket" data-edge-key="0" data-edge-id="ui-api" data-composition-points="210,272;330,272" d="M 210 272 L 330 272" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="api" data-edge-to="auth" data-edge-label="JWT + 限流" data-edge-key="1" data-edge-id="api-uses-auth" data-composition-points="415,240;415,164" d="M 415 240 L 415 164" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="api" data-edge-to="db" data-edge-label="定義 / run 快照" data-edge-key="2" data-edge-id="api-write-db" data-composition-points="415,304;415,380" d="M 415 304 L 415 380" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="api" data-edge-to="redis" data-edge-label="派送根節點" data-edge-key="3" data-edge-id="api-enqueue" data-composition-points="500,265;620,265" d="M 500 265 L 620 265" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="beat" data-edge-to="redis" data-edge-label="到期檢查" data-edge-key="4" data-edge-id="beat-to-redis" data-composition-points="700,164;700,240" d="M 700 164 L 700 240" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="redis" data-edge-to="worker" data-edge-label="celery 佇列" data-edge-key="5" data-edge-id="redis-to-worker" data-composition-points="780,272;890,272" d="M 780 272 L 890 272" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="redis" data-edge-to="worker_agent" data-edge-label="agent_step 佇列" data-edge-key="6" data-edge-id="redis-to-agent" data-composition-points="780,272;835,272;835,132;890,132" d="M 780 272 L 827 272 Q 835 272 835 264 L 835 140 Q 835 132 843 132 L 890 132" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="db" data-edge-label="結果 + 下游 inputs" data-edge-key="7" data-edge-id="worker-to-db" data-composition-points="975,304;975,328;524,328;524,412;500,412" d="M 975 304 L 975 320 Q 975 328 967 328 L 532 328 Q 524 328 524 336 L 524 404 Q 524 412 516 412 L 500 412" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="external" data-edge-label="HTTP / 通知" data-edge-key="8" data-edge-id="worker-external" data-composition-points="1060,272;1170,272" d="M 1060 272 L 1170 272" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker_agent" data-edge-to="llm" data-edge-label="OpenAI API" data-edge-key="9" data-edge-id="agent-llm" data-composition-points="1060,132;1170,132" d="M 1060 132 L 1170 132" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="redis" data-edge-to="api" data-edge-label="Pub/Sub 狀態" data-edge-key="10" data-edge-id="pubsub-api" data-composition-points="620,279;500,279" d="M 620 279 L 500 279" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-users" data-node-id="users" data-node-label="使用者" tabindex="0" role="button" aria-label="Focus 使用者, 瀏覽器, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="瀏覽器" data-node-context="Architecture component">
-          <title>使用者 · 瀏覽器 · Architecture component</title>
-          <rect x="40" y="280" width="140" height="64" rx="6" class="c-mask"/>
-          <rect x="40" y="280" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 286) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="110" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">使用者</text>
-        <text data-detail="context" x="110" y="326" class="t-muted" font-size="9" text-anchor="middle">瀏覽器</text>
-        </g>
-
-        <g id="node-locust" data-node-id="locust" data-node-label="Locust" tabindex="0" role="button" aria-label="Focus Locust, 壓力測試工具, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="壓力測試工具" data-node-context="Architecture component">
-          <title>Locust · 壓力測試工具 · Architecture component</title>
-          <rect x="40" y="444" width="140" height="60" rx="6" class="c-mask"/>
-          <rect x="40" y="444" width="140" height="60" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 450) scale(0.6875)">
-            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
-            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="110" y="472" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Locust</text>
-        <text data-detail="context" x="110" y="488" class="t-muted" font-size="9" text-anchor="middle">壓力測試工具</text>
-        </g>
-
-        <g id="node-frontend" data-node-id="frontend" data-node-label="React Dashboard" tabindex="0" role="button" aria-label="Focus React Dashboard, Vite :5173, Docker Compose 服務網路" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="Vite :5173" data-node-tag="Login / Tasks / Workflows / Schedules / Ops" data-node-context="Docker Compose 服務網路">
-          <title>React Dashboard · Vite :5173 · Docker Compose 服務網路 · Login / Tasks / Workflows / Schedules / Ops</title>
-          <rect x="280" y="280" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="280" y="280" width="170" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(286 286) scale(0.6875)">
+        <g id="node-frontend" data-node-id="frontend" data-node-label="React Dashboard" tabindex="0" role="button" aria-label="Focus React Dashboard, 瀏覽器 · Vite :5173, Docker Compose 服務網路" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="瀏覽器 · Vite :5173" data-node-tag="React Flow 畫布" data-node-context="Docker Compose 服務網路">
+          <title>React Dashboard · 瀏覽器 · Vite :5173 · Docker Compose 服務網路 · React Flow 畫布</title>
+          <rect x="40" y="240" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="40" y="240" width="170" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(46 246) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="365" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">React Dashboard</text>
-        <text data-detail="context" x="365" y="326" class="t-muted" font-size="9" text-anchor="middle">Vite :5173</text>
-        <text data-detail="fine" x="365" y="336" class="t-frontend" font-size="6.2" text-anchor="middle">Login / Tasks / Workflows / Schedules / Ops</text>
+          <text data-node-label="" data-detail-anchor="" x="125" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">React Dashboard</text>
+        <text data-detail="context" x="125" y="286" class="t-muted" font-size="9" text-anchor="middle">瀏覽器 · Vite :5173</text>
+        <text data-detail="fine" x="125" y="296" class="t-frontend" font-size="7" text-anchor="middle">React Flow 畫布</text>
         </g>
 
-        <g id="node-api" data-node-id="api" data-node-label="FastAPI API Server" tabindex="0" role="button" aria-label="Focus FastAPI API Server, :8000, Docker Compose 服務網路 › JWT 保護範圍 (API 端點)" aria-pressed="false" data-node-kind="backend" data-node-sublabel=":8000" data-node-context="Docker Compose 服務網路 › JWT 保護範圍 (API 端點)">
-          <title>FastAPI API Server · :8000 · Docker Compose 服務網路 › JWT 保護範圍 (API 端點)</title>
-          <rect x="620" y="280" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="620" y="280" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(626 286) scale(0.6875)">
+        <g id="node-api" data-node-id="api" data-node-label="FastAPI API Server" tabindex="0" role="button" aria-label="Focus FastAPI API Server, :8000, Docker Compose 服務網路 › JWT 保護範圍" aria-pressed="false" data-node-kind="backend" data-node-sublabel=":8000" data-node-tag="定義 / run / 排程" data-node-context="Docker Compose 服務網路 › JWT 保護範圍">
+          <title>FastAPI API Server · :8000 · Docker Compose 服務網路 › JWT 保護範圍 · 定義 / run / 排程</title>
+          <rect x="330" y="240" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="330" y="240" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(336 246) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="705" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">FastAPI API Server</text>
-        <text data-detail="context" x="705" y="326" class="t-muted" font-size="9" text-anchor="middle">:8000</text>
+          <text data-node-label="" data-detail-anchor="" x="415" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">FastAPI API Server</text>
+        <text data-detail="context" x="415" y="286" class="t-muted" font-size="9" text-anchor="middle">:8000</text>
+        <text data-detail="fine" x="415" y="296" class="t-backend" font-size="7" text-anchor="middle">定義 / run / 排程</text>
         </g>
 
-        <g id="node-auth" data-node-id="auth" data-node-label="Auth &amp; Rate Limit" tabindex="0" role="button" aria-label="Focus Auth &amp; Rate Limit, JWT + bcrypt, Docker Compose 服務網路 › JWT 保護範圍 (API 端點)" aria-pressed="false" data-node-kind="security" data-node-sublabel="JWT + bcrypt" data-node-context="Docker Compose 服務網路 › JWT 保護範圍 (API 端點)">
-          <title>Auth &amp; Rate Limit · JWT + bcrypt · Docker Compose 服務網路 › JWT 保護範圍 (API 端點)</title>
-          <rect x="620" y="100" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="620" y="100" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(626 106) scale(0.6875)">
+        <g id="node-auth" data-node-id="auth" data-node-label="Auth &amp; Rate Limit" tabindex="0" role="button" aria-label="Focus Auth &amp; Rate Limit, JWT + bcrypt, Docker Compose 服務網路 › JWT 保護範圍" aria-pressed="false" data-node-kind="security" data-node-sublabel="JWT + bcrypt" data-node-context="Docker Compose 服務網路 › JWT 保護範圍">
+          <title>Auth &amp; Rate Limit · JWT + bcrypt · Docker Compose 服務網路 › JWT 保護範圍</title>
+          <rect x="330" y="100" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="330" y="100" width="170" height="64" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(336 106) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="705" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Auth &amp; Rate Limit</text>
-        <text data-detail="context" x="705" y="146" class="t-muted" font-size="9" text-anchor="middle">JWT + bcrypt</text>
+          <text data-node-label="" data-detail-anchor="" x="415" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Auth &amp; Rate Limit</text>
+        <text data-detail="context" x="415" y="146" class="t-muted" font-size="9" text-anchor="middle">JWT + bcrypt</text>
         </g>
 
-        <g id="node-beat" data-node-id="beat" data-node-label="Celery Beat" tabindex="0" role="button" aria-label="Focus Celery Beat, 排程檢查, Docker Compose 服務網路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="排程檢查" data-node-tag="每 60 秒" data-node-context="Docker Compose 服務網路">
-          <title>Celery Beat · 排程檢查 · Docker Compose 服務網路 · 每 60 秒</title>
-          <rect x="900" y="100" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="900" y="100" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(906 106) scale(0.6875)">
+        <g id="node-db" data-node-id="db" data-node-label="PostgreSQL" tabindex="0" role="button" aria-label="Focus PostgreSQL, :5432, Docker Compose 服務網路" aria-pressed="false" data-node-kind="database" data-node-sublabel=":5432" data-node-tag="definitions / runs / task_logs" data-node-context="Docker Compose 服務網路">
+          <title>PostgreSQL · :5432 · Docker Compose 服務網路 · definitions / runs / task_logs</title>
+          <rect x="330" y="380" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="330" y="380" width="170" height="64" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(336 386) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="415" y="410" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PostgreSQL</text>
+        <text data-detail="context" x="415" y="426" class="t-muted" font-size="9" text-anchor="middle">:5432</text>
+        <text data-detail="fine" x="415" y="436" class="t-database" font-size="7" text-anchor="middle">definitions / runs / task_logs</text>
+        </g>
+
+        <g id="node-beat" data-node-id="beat" data-node-label="Celery Beat" tabindex="0" role="button" aria-label="Focus Celery Beat, 每 60 秒, Docker Compose 服務網路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="每 60 秒" data-node-context="Docker Compose 服務網路">
+          <title>Celery Beat · 每 60 秒 · Docker Compose 服務網路</title>
+          <rect x="620" y="100" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="620" y="100" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(626 106) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="985" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Celery Beat</text>
-        <text data-detail="context" x="985" y="146" class="t-muted" font-size="9" text-anchor="middle">排程檢查</text>
-        <text data-detail="fine" x="985" y="156" class="t-backend" font-size="7" text-anchor="middle">每 60 秒</text>
+          <text data-node-label="" data-detail-anchor="" x="700" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Celery Beat</text>
+        <text data-detail="context" x="700" y="146" class="t-muted" font-size="9" text-anchor="middle">每 60 秒</text>
         </g>
 
-        <g id="node-redis" data-node-id="redis" data-node-label="Redis" tabindex="0" role="button" aria-label="Focus Redis, :6379, Docker Compose 服務網路" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel=":6379" data-node-tag="Broker + Pub/Sub + 限流" data-node-context="Docker Compose 服務網路">
-          <title>Redis · :6379 · Docker Compose 服務網路 · Broker + Pub/Sub + 限流</title>
-          <rect x="900" y="280" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="900" y="280" width="160" height="64" rx="6" class="c-messagebus" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(906 286) scale(0.6875)">
+        <g id="node-redis" data-node-id="redis" data-node-label="Redis" tabindex="0" role="button" aria-label="Focus Redis, :6379, Docker Compose 服務網路" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel=":6379" data-node-tag="Broker + Pub/Sub" data-node-context="Docker Compose 服務網路">
+          <title>Redis · :6379 · Docker Compose 服務網路 · Broker + Pub/Sub</title>
+          <rect x="620" y="240" width="160" height="64" rx="6" class="c-mask"/>
+          <rect x="620" y="240" width="160" height="64" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(626 246) scale(0.6875)">
             <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
             <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
             <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
             <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="980" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Redis</text>
-        <text data-detail="context" x="980" y="326" class="t-muted" font-size="9" text-anchor="middle">:6379</text>
-        <text data-detail="fine" x="980" y="336" class="t-messagebus" font-size="7" text-anchor="middle">Broker + Pub/Sub + 限流</text>
+          <text data-node-label="" data-detail-anchor="" x="700" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Redis</text>
+        <text data-detail="context" x="700" y="286" class="t-muted" font-size="9" text-anchor="middle">:6379</text>
+        <text data-detail="fine" x="700" y="296" class="t-messagebus" font-size="7" text-anchor="middle">Broker + Pub/Sub</text>
         </g>
 
-        <g id="node-worker" data-node-id="worker" data-node-label="Celery Worker" tabindex="0" role="button" aria-label="Focus Celery Worker, concurrency=4, Docker Compose 服務網路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="concurrency=4" data-node-context="Docker Compose 服務網路">
-          <title>Celery Worker · concurrency=4 · Docker Compose 服務網路</title>
-          <rect x="1140" y="280" width="170" height="64" rx="6" class="c-mask"/>
-          <rect x="1140" y="280" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1146 286) scale(0.6875)">
+        <g id="node-worker" data-node-id="worker" data-node-label="Celery Worker" tabindex="0" role="button" aria-label="Focus Celery Worker, -Q celery, Docker Compose 服務網路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="-Q celery" data-node-tag="executor + sandbox" data-node-context="Docker Compose 服務網路">
+          <title>Celery Worker · -Q celery · Docker Compose 服務網路 · executor + sandbox</title>
+          <rect x="890" y="240" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="890" y="240" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(896 246) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1225" y="310" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Celery Worker</text>
-        <text data-detail="context" x="1225" y="326" class="t-muted" font-size="9" text-anchor="middle">concurrency=4</text>
+          <text data-node-label="" data-detail-anchor="" x="975" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Celery Worker</text>
+        <text data-detail="context" x="975" y="286" class="t-muted" font-size="9" text-anchor="middle">-Q celery</text>
+        <text data-detail="fine" x="975" y="296" class="t-backend" font-size="7" text-anchor="middle">executor + sandbox</text>
         </g>
 
-        <g id="node-db" data-node-id="db" data-node-label="PostgreSQL" tabindex="0" role="button" aria-label="Focus PostgreSQL, :5432, Docker Compose 服務網路" aria-pressed="false" data-node-kind="database" data-node-sublabel=":5432" data-node-context="Docker Compose 服務網路">
-          <title>PostgreSQL · :5432 · Docker Compose 服務網路</title>
-          <rect x="625" y="444" width="160" height="64" rx="6" class="c-mask"/>
-          <rect x="625" y="444" width="160" height="64" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(631 450) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+        <g id="node-worker_agent" data-node-id="worker_agent" data-node-label="worker-agent" tabindex="0" role="button" aria-label="Focus worker-agent, -Q agent_step, Docker Compose 服務網路" aria-pressed="false" data-node-kind="backend" data-node-sublabel="-Q agent_step" data-node-tag="Codoctopus" data-node-context="Docker Compose 服務網路">
+          <title>worker-agent · -Q agent_step · Docker Compose 服務網路 · Codoctopus</title>
+          <rect x="890" y="100" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="890" y="100" width="170" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(896 106) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="705" y="474" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">PostgreSQL</text>
-        <text data-detail="context" x="705" y="490" class="t-muted" font-size="9" text-anchor="middle">:5432</text>
+          <text data-node-label="" data-detail-anchor="" x="975" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">worker-agent</text>
+        <text data-detail="context" x="975" y="146" class="t-muted" font-size="9" text-anchor="middle">-Q agent_step</text>
+        <text data-detail="fine" x="975" y="156" class="t-backend" font-size="7" text-anchor="middle">Codoctopus</text>
+        </g>
+
+        <g id="node-external" data-node-id="external" data-node-label="外部服務" tabindex="0" role="button" aria-label="Focus 外部服務, GitHub / 網頁 / Discord, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="GitHub / 網頁 / Discord" data-node-context="Architecture component">
+          <title>外部服務 · GitHub / 網頁 / Discord · Architecture component</title>
+          <rect x="1170" y="240" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1170" y="240" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1176 246) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1255" y="270" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">外部服務</text>
+        <text data-detail="context" x="1255" y="286" class="t-muted" font-size="9" text-anchor="middle">GitHub / 網頁 / Discord</text>
+        </g>
+
+        <g id="node-llm" data-node-id="llm" data-node-label="LM Studio" tabindex="0" role="button" aria-label="Focus LM Studio, qwen3.5-9b (本機), Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="qwen3.5-9b (本機)" data-node-context="Architecture component">
+          <title>LM Studio · qwen3.5-9b (本機) · Architecture component</title>
+          <rect x="1170" y="100" width="170" height="64" rx="6" class="c-mask"/>
+          <rect x="1170" y="100" width="170" height="64" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1176 106) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1255" y="130" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">LM Studio</text>
+        <text data-detail="context" x="1255" y="146" class="t-muted" font-size="9" text-anchor="middle">qwen3.5-9b (本機)</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="users" data-edge-to="frontend" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="user-to-ui">
-          <rect x="213" y="292" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="230" y="302" class="t-backend" font-size="8" text-anchor="middle">HTTPS</text>
+        <g data-detail="context" data-edge-from="frontend" data-edge-to="api" data-edge-label="REST + WebSocket" data-edge-key="0" data-edge-id="ui-api">
+          <rect x="226.6" y="252" width="86.8" height="14" rx="3" class="c-mask"/>
+          <text x="270" y="262" class="t-backend" font-size="8" text-anchor="middle">REST + WebSocket</text>
         </g>
-        <g data-detail="context" data-edge-from="frontend" data-edge-to="api" data-edge-label="HTTP + WebSocket" data-edge-key="1" data-edge-id="ui-api">
-          <rect x="491.6" y="285" width="86.8" height="14" rx="3" class="c-mask"/>
-          <text x="535" y="295" class="t-backend" font-size="8" text-anchor="middle">HTTP + WebSocket</text>
+        <g data-detail="context" data-edge-from="api" data-edge-to="auth" data-edge-label="JWT + 限流" data-edge-key="1" data-edge-id="api-uses-auth">
+          <rect x="386" y="220" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="415" y="230" class="t-security" font-size="8" text-anchor="middle">JWT + 限流</text>
         </g>
-        <g data-detail="context" data-edge-from="api" data-edge-to="auth" data-edge-label="JWT 驗證 + 限流檢查" data-edge-key="2" data-edge-id="api-uses-auth">
-          <rect x="654.4" y="260" width="101.2" height="14" rx="3" class="c-mask"/>
-          <text x="705" y="270" class="t-security" font-size="8" text-anchor="middle">JWT 驗證 + 限流檢查</text>
+        <g data-detail="context" data-edge-from="api" data-edge-to="db" data-edge-label="定義 / run 快照" data-edge-key="2" data-edge-id="api-write-db">
+          <rect x="374" y="308" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="415" y="318" class="t-muted" font-size="8" text-anchor="middle">定義 / run 快照</text>
         </g>
-        <g data-detail="context" data-edge-from="auth" data-edge-to="redis" data-edge-label="滑動窗口計數" data-edge-key="3" data-edge-id="auth-rate-redis">
-          <rect x="811.2" y="202" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="845" y="212" class="t-security" font-size="8" text-anchor="middle">滑動窗口計數</text>
+        <g data-detail="context" data-edge-from="api" data-edge-to="redis" data-edge-label="派送根節點" data-edge-key="3" data-edge-id="api-enqueue">
+          <rect x="531" y="245" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="560" y="255" class="t-backend" font-size="8" text-anchor="middle">派送根節點</text>
         </g>
-        <g data-detail="context" data-edge-from="api" data-edge-to="db" data-edge-label="寫入任務 / Workflow 中繼資料" data-edge-key="4" data-edge-id="api-write-db">
-          <rect x="632.8" y="348" width="144.4" height="14" rx="3" class="c-mask"/>
-          <text x="705" y="358" class="t-muted" font-size="8" text-anchor="middle">寫入任務 / Workflow 中繼資料</text>
+        <g data-detail="context" data-edge-from="beat" data-edge-to="redis" data-edge-label="到期檢查" data-edge-key="4" data-edge-id="beat-to-redis">
+          <rect x="675.8" y="168" width="48.4" height="14" rx="3" class="c-mask"/>
+          <text x="700" y="178" class="t-muted" font-size="8" text-anchor="middle">到期檢查</text>
         </g>
-        <g data-detail="context" data-edge-from="api" data-edge-to="redis" data-edge-label="派送任務至佇列" data-edge-key="5" data-edge-id="api-enqueue-redis">
-          <rect x="775.4" y="348" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="814" y="358" class="t-muted" font-size="8" text-anchor="middle">派送任務至佇列</text>
+        <g data-detail="context" data-edge-from="redis" data-edge-to="worker" data-edge-label="celery 佇列" data-edge-key="5" data-edge-id="redis-to-worker">
+          <rect x="803.6" y="310" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="835" y="320" class="t-backend" font-size="8" text-anchor="middle">celery 佇列</text>
         </g>
-        <g data-detail="context" data-edge-from="redis" data-edge-to="worker" data-edge-label="消費任務" data-edge-key="6" data-edge-id="redis-to-worker">
-          <rect x="1059.8" y="293" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="1084" y="303" class="t-muted" font-size="8" text-anchor="middle">消費任務</text>
+        <g data-detail="context" data-edge-from="redis" data-edge-to="worker_agent" data-edge-label="agent_step 佇列" data-edge-key="6" data-edge-id="redis-to-agent">
+          <rect x="794" y="182" width="82" height="14" rx="3" class="c-mask"/>
+          <text x="835" y="192" class="t-muted" font-size="8" text-anchor="middle">agent_step 佇列</text>
         </g>
-        <g data-detail="context" data-edge-from="worker" data-edge-to="db" data-edge-label="更新狀態、動態展開 for_each 分支" data-edge-key="7" data-edge-id="worker-update-db">
-          <rect x="1034.2" y="381" width="163.6" height="14" rx="3" class="c-mask"/>
-          <text x="1116" y="391" class="t-muted" font-size="8" text-anchor="middle">更新狀態、動態展開 for_each 分支</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="db" data-edge-label="結果 + 下游 inputs" data-edge-key="7" data-edge-id="worker-to-db">
+          <rect x="701.3" y="308" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
+          <text x="749.5" y="318" class="t-muted" font-size="8" text-anchor="middle">結果 + 下游 inputs</text>
         </g>
-        <g data-detail="context" data-edge-from="worker" data-edge-to="redis" data-edge-label="發布狀態 / 派送下游任務" data-edge-key="8" data-edge-id="worker-publish-redis">
-          <rect x="1055.8" y="265.5" width="120.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="1116" y="275.5" class="t-muted" font-size="8" text-anchor="middle">發布狀態 / 派送下游任務</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="external" data-edge-label="HTTP / 通知" data-edge-key="8" data-edge-id="worker-external">
+          <rect x="1083.6" y="252" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="1115" y="262" class="t-muted" font-size="8" text-anchor="middle">HTTP / 通知</text>
         </g>
-        <g data-detail="context" data-edge-from="redis" data-edge-to="api" data-edge-label="Pub/Sub 推播狀態" data-edge-key="9" data-edge-id="redis-pubsub-api">
-          <rect x="832.6" y="385" width="86.8" height="14" rx="3" class="c-mask"/>
-          <text x="876" y="395" class="t-messagebus" font-size="8" text-anchor="middle">Pub/Sub 推播狀態</text>
+        <g data-detail="context" data-edge-from="worker_agent" data-edge-to="llm" data-edge-label="OpenAI API" data-edge-key="9" data-edge-id="agent-llm">
+          <rect x="1086" y="112" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="1115" y="122" class="t-muted" font-size="8" text-anchor="middle">OpenAI API</text>
         </g>
-        <g data-detail="context" data-edge-from="locust" data-edge-to="api" data-edge-label="壓力測試請求" data-edge-key="10" data-edge-id="locust-to-api">
-          <rect x="562.2" y="376.5" width="67.6" height="14" rx="3" class="c-mask"/>
-          <text x="596" y="386.5" class="t-messagebus" font-size="8" text-anchor="middle">壓力測試請求</text>
-        </g>
-        <g data-detail="context" data-edge-from="beat" data-edge-to="redis" data-edge-label="每 60 秒送出到期檢查任務" data-edge-key="11" data-edge-id="beat-to-redis">
-          <rect x="930.4" y="168" width="125.19999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="993" y="178" class="t-muted" font-size="8" text-anchor="middle">每 60 秒送出到期檢查任務</text>
+        <g data-detail="context" data-edge-from="redis" data-edge-to="api" data-edge-label="Pub/Sub 狀態" data-edge-key="10" data-edge-id="pubsub-api">
+          <rect x="526.2" y="281" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="560" y="291" class="t-messagebus" font-size="8" text-anchor="middle">Pub/Sub 狀態</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
         <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Docker Compose 服務網路">
-          <rect data-graph-role="structural-frame-label-mask" x="254" y="80" width="134.2" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="258" y="93" class="t-cloud" font-size="9" font-weight="600">Docker Compose 服務網路</text>
+          <rect data-graph-role="structural-frame-label-mask" x="14" y="80" width="134.2" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="18" y="93" class="t-cloud" font-size="9" font-weight="600">Docker Compose 服務網路</text>
         </g>
 
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="JWT 保護範圍 (API 端點)">
-          <rect data-graph-role="structural-frame-label-mask" x="594" y="80" width="134.2" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="598" y="93" class="t-security" font-size="9" font-weight="600">JWT 保護範圍 (API 端點)</text>
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="JWT 保護範圍">
+          <rect data-graph-role="structural-frame-label-mask" x="304" y="80" width="74.8" height="16" rx="3" class="c-mask"/>
+          <text data-boundary-label="" x="308" y="93" class="t-security" font-size="9" font-weight="600">JWT 保護範圍</text>
         </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="560" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="580" data-legend-width="83">
-            <rect x="40" y="571" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
-            <text x="62" y="580" class="t-muted" font-size="10" font-weight="500">Frontend</text>
+          <text x="40" y="496" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="Frontend" data-legend-x="40" data-legend-baseline="516" data-legend-width="83">
+            <rect x="40" y="507" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="516" class="t-muted" font-size="10" font-weight="500">Frontend</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="580" data-legend-width="78">
-            <rect x="145" y="571" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="167" y="580" class="t-muted" font-size="10" font-weight="500">Backend</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="Backend" data-legend-x="145" data-legend-baseline="516" data-legend-width="78">
+            <rect x="145" y="507" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="167" y="516" class="t-muted" font-size="10" font-weight="500">Backend</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="580" data-legend-width="83">
-            <rect x="245" y="571" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
-            <text x="267" y="580" class="t-muted" font-size="10" font-weight="500">Database</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="Database" data-legend-x="245" data-legend-baseline="516" data-legend-width="83">
+            <rect x="245" y="507" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="267" y="516" class="t-muted" font-size="10" font-weight="500">Database</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="350" data-legend-baseline="580" data-legend-width="83">
-            <rect x="350" y="571" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
-            <text x="372" y="580" class="t-muted" font-size="10" font-weight="500">Security</text>
+          <g data-legend-semantic-kind="security" data-legend-kind="security" data-legend-label="Security" data-legend-x="350" data-legend-baseline="516" data-legend-width="83">
+            <rect x="350" y="507" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
+            <text x="372" y="516" class="t-muted" font-size="10" font-weight="500">Security</text>
           </g>
-          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="Message bus" data-legend-x="455" data-legend-baseline="580" data-legend-width="98">
-            <rect x="455" y="571" width="16" height="10" rx="2.5" class="c-messagebus" stroke-width="1"/>
-            <text x="477" y="580" class="t-muted" font-size="10" font-weight="500">Message bus</text>
+          <g data-legend-semantic-kind="messagebus" data-legend-kind="messagebus" data-legend-label="Message bus" data-legend-x="455" data-legend-baseline="516" data-legend-width="98">
+            <rect x="455" y="507" width="16" height="10" rx="2.5" class="c-messagebus" stroke-width="1"/>
+            <text x="477" y="516" class="t-muted" font-size="10" font-weight="500">Message bus</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="575" data-legend-baseline="580" data-legend-width="83">
-            <rect x="575" y="571" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="597" y="580" class="t-muted" font-size="10" font-weight="500">External</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="External" data-legend-x="575" data-legend-baseline="516" data-legend-width="83">
+            <rect x="575" y="507" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="597" y="516" class="t-muted" font-size="10" font-weight="500">External</text>
           </g>
         </g>
       </svg>
@@ -5438,58 +5447,36 @@
     <div class="cards">
       <div class="card">
         <div class="card-header">
-          <div class="card-dot cyan"></div>
-          <h3>前端</h3>
-        </div>
-        <ul>
-          <li>&bull; React 19 + TypeScript + Tailwind SPA</li>
-          <li>&bull; Vite dev server proxy /api、/ws 到後端</li>
-          <li>&bull; Login / Tasks / Workflows / Schedules / Ops 五大頁面</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
           <div class="card-dot emerald"></div>
-          <h3>任務執行</h3>
+          <h3>執行模型</h3>
         </div>
         <ul>
-          <li>&bull; FastAPI 接收 REST 與 WebSocket 連線</li>
-          <li>&bull; Celery Worker 消費 Redis 佇列,支援 echo / heavy_computation / flaky_task / http_request / job_search / tailor_cv / job_apply</li>
-          <li>&bull; DAG workflow 依賴滿足時自動派送下游節點,單一節點失敗連鎖取消下游</li>
-        </ul>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <div class="card-dot amber"></div>
-          <h3>排程與動態擴展</h3>
-        </div>
-        <ul>
-          <li>&bull; WorkflowSchedule 綁定 cron 表達式,Celery Beat 每 60 秒檢查到期排程並自動建立、派送整組 workflow</li>
-          <li>&bull; for_each 動態 Fan-out:節點結果為 list 時(如搜尋到 N 筆職缺),依項目各自展開成真正的下游任務,payload 用 {{item.欄位}} 取值</li>
+          <li>&bull; 定義與 run 分離：run 保留步驟快照與版本號，可 /rerun 重跑、/retry 從失敗點續跑</li>
+          <li>&bull; 8 種任務類型；python / shell 在受限 subprocess 執行，上游資料以 inputs 傳入</li>
+          <li>&bull; for_each 展開、reduce_of 依項目順序收斂，分支未命中標記 cancelled</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot violet"></div>
-          <h3>即時性</h3>
+          <h3>LLM 與排程</h3>
         </div>
         <ul>
-          <li>&bull; Redis Pub/Sub 推播任務與 workflow 狀態變更</li>
-          <li>&bull; 前端透過 WebSocket 即時更新,無需輪詢</li>
+          <li>&bull; agent_step 走獨立佇列，只有 worker-agent 裝 Codoctopus，以 structured output 回傳固定欄位</li>
+          <li>&bull; Celery Beat 每 60 秒檢查 cron 排程；Redis Pub/Sub + WebSocket 即時推播狀態</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot rose"></div>
-          <h3>安全性</h3>
+          <h3>安全與驗證</h3>
         </div>
         <ul>
-          <li>&bull; bcrypt 雜湊密碼 + JWT 簽發 session token</li>
-          <li>&bull; Redis 滑動窗口限流,依登入身份獨立計算請求速率</li>
+          <li>&bull; bcrypt + JWT；Redis 滑動窗口限流依登入身份計算</li>
+          <li>&bull; http_request / fetch_page 擋內網與 metadata 目標，轉址逐跳重驗</li>
+          <li>&bull; executor 整合測試跑在真的 Postgres 上；Locust 壓測 API</li>
         </ul>
       </div>
     </div>

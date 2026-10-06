@@ -281,7 +281,7 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 | `GET /tasks` | 資料庫分頁查詢 | 502 ms | 97.2 RPS | 0.08% |
 | `POST /tasks` | 任務建立 + 佇列派發 | 520 ms | 64.5 RPS | 0.04% |
 
-> 延遲比早期版本高，原因是這次測試是在修正 API 限流器的 event-loop 阻塞 bug**之後**，用真實通過驗證、實際打到資料庫的請求測出來的乾淨數字；先前 288 RPS / 38.9ms 那組數字量到的其實大多是驗證失敗、幾乎不碰資料庫的快速拒絕請求，兩者不是同一件事，不能直接比較。目前的瓶頸研判在於 `/tasks` 端點是同步 (`def`，非 `async def`) SQLAlchemy 呼叫，FastAPI 會丟進 thread pool 執行，高併發下容易排隊；之後若要繼續壓榨吞吐量，可以考慮把 DB 層換成 async（`asyncpg` + SQLAlchemy async session）。
+> 這組數字不能直接跟早期版本的 288 RPS / 38.9 ms 比較：兩次的併發人數不同（當時一百多人，這次 150 人），程式也改過不少，早期那次還是在修正限流器的 event-loop 阻塞 bug 之前測的。重測時第一輪有 83% 的請求是 `403`，原因是容器沒有重新讀取 `.env`，還在用舊的 API key；那一輪的數字已經捨棄，上表是修正後所有請求都通過驗證的結果。目前的瓶頸研判在於 `/tasks` 端點是同步 (`def`，非 `async def`) SQLAlchemy 呼叫，FastAPI 會丟進 thread pool 執行，高併發下容易排隊；之後若要繼續壓榨吞吐量，可以考慮把 DB 層換成 async（`asyncpg` + SQLAlchemy async session）。
 >
 > 這組數字是在認證機制從 API Key 換成 JWT 帳號登入**之前**測的（驗證身份的檢查方式改變了，但都是 O(1) 的查詢/解碼，預期不會是主要瓶頸），之後重新量測時一併更新這個表格。
 
