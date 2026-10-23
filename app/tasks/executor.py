@@ -14,7 +14,7 @@ from app.tasks.handler import get_task_handler, TASK_REGISTRY
 import os
 import redis
 import json
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.models.workflow import Workflow, WorkflowStep, WorkFlowStatus, WorkflowStepTemplate
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -35,6 +35,7 @@ def execute_task(self, task_id: str):
     db = SessionLocal()
     start_time = time.time()
     task_uuid = uuid.UUID(task_id)
+    claimed = False
 
     try:
         task = db.get(Task, task_uuid)
@@ -46,11 +47,23 @@ def execute_task(self, task_id: str):
         if task.deleted_at is not None:
             return f"Task {task_uuid} was deleted"
 
-        if task.status == TaskStatus.RUNNING or task.status == TaskStatus.SUCCESS or task.status == TaskStatus.FAILED:
+        if task.status not in (TaskStatus.PENDING, TaskStatus.RETRYING):
             return f"Task {task_uuid} is already {task.status}"
 
-        # 1. 更新狀態為 RUNNING (idempotent)
-        task.status = TaskStatus.RUNNING if (task.status == TaskStatus.PENDING or task.status == TaskStatus.RETRYING) else task.status
+        # Claim in the database and publish ownership before any handler side effects.
+        claim = db.execute(
+            update(Task)
+            .where(
+                Task.id == task_uuid,
+                Task.status.in_([TaskStatus.PENDING, TaskStatus.RETRYING]),
+                Task.deleted_at.is_(None),
+            )
+            .values(status=TaskStatus.RUNNING)
+        )
+        db.commit()
+        if claim.rowcount == 0:
+            return f"Task {task_uuid} is already claimed or no longer runnable"
+        claimed = True
         notify_status_change(str(task.id), TaskStatus.RUNNING, None, None)
        
         # 2. 尋找對應的 handler
@@ -67,6 +80,9 @@ def execute_task(self, task_id: str):
         return result
 
     except Exception as exc:
+        if not claimed:
+            raise
+        db.rollback()
         execute_time_ms = (time.time() - start_time) * 1000
         task = db.get(Task, task_uuid)
 
