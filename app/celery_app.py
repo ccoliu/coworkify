@@ -36,6 +36,10 @@ celery_app.conf.update(
     enable_utc=True, # 啟用 UTC
     task_track_started = True, # 追蹤任務開始狀態
     worker_prefetch_multiplier=1, # 一次只抓取一個任務
+    # handler 跑完才 ack：worker 在「收到訊息、還沒認領」之間死掉時，訊息會回到佇列。
+    # 認領之後才死掉的，重送的訊息會被認領擋下，改由 recover_stale_tasks 回收。
+    task_acks_late = True, 
+    task_reject_on_worker_lost=True,
     broker_transport_options={
         "priority_steps": list(range(10)),
         "sep": ":", # 區分優先級與任務名稱
@@ -50,5 +54,9 @@ celery_app.conf.beat_schedule = {
     "check-due-workflow-schedules": {
         "task": "coworkify.check_due_schedules",
         "schedule": 60.0 # 每60秒檢查一次排程
-    }
+    },
+    "recover-stale-running-tasks": {
+        "task": "coworkify.recover_stale_tasks",
+        "schedule": 60.0 # 每60秒找一次 worker 已經不在、卻還停在 RUNNING 的 task
+    },
 }

@@ -14,7 +14,7 @@ from app.tasks.handler import get_task_handler, TASK_REGISTRY
 import os
 import redis
 import json
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.models.workflow import Workflow, WorkflowStep, WorkFlowStatus, WorkflowStepTemplate
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -35,6 +35,7 @@ def execute_task(self, task_id: str):
     db = SessionLocal()
     start_time = time.time()
     task_uuid = uuid.UUID(task_id)
+    claimed = False
 
     try:
         task = db.get(Task, task_uuid)
@@ -50,7 +51,9 @@ def execute_task(self, task_id: str):
             return f"Task {task_uuid} is already {task.status}"
 
         # 1. 更新狀態為 RUNNING (idempotent)
-        task.status = TaskStatus.RUNNING if (task.status == TaskStatus.PENDING or task.status == TaskStatus.RETRYING) else task.status
+        if not claim_task(db, task_uuid):
+            return f"Task {task_uuid} was not claimed: it is {task.status}"
+        claimed = True
         notify_status_change(str(task.id), TaskStatus.RUNNING, None, None)
        
         # 2. 尋找對應的 handler
@@ -67,6 +70,10 @@ def execute_task(self, task_id: str):
         return result
 
     except Exception as exc:
+        # 還沒認領就出錯（例如連不上 DB）：這次投遞不擁有這個 task，不能替它記失敗
+        if not claimed:
+            raise
+        db.rollback()
         execute_time_ms = (time.time() - start_time) * 1000
         task = db.get(Task, task_uuid)
 
@@ -79,6 +86,26 @@ def execute_task(self, task_id: str):
         raise exc
     finally:
         db.close()
+
+def claim_task(db, task_id: uuid.UUID) -> bool:
+    """
+    把 task 從 PENDING/RETRYING 改成 RUNNING，成功（這次投遞拿到執行權）回傳 True。
+
+    用一句帶條件的 UPDATE 而不是「先讀狀態、再改」：兩個 worker 同時讀到 PENDING 時，
+    資料庫只會讓其中一句 UPDATE 改到這一列，另一句的 rowcount 是 0。
+    立刻 commit——RUNNING 必須在 handler 產生任何副作用之前就讓其他 worker 看得到。
+    """
+    result = db.execute(
+        update(Task)
+        .where(
+            Task.id == task_id,
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.RETRYING]),
+            Task.deleted_at.is_(None),
+        )
+        .values(status=TaskStatus.RUNNING, claimed_at=datetime.utcnow())
+    )
+    db.commit()
+    return result.rowcount == 1
 
 def _format_for_interpolation(value) -> str:
     """
@@ -99,6 +126,7 @@ def record_task_success(db, task: Task, result, execute_time_ms: float = 0.0):
         result=result,
         execution_time_ms=execute_time_ms,
     ))
+    task.claimed_at = None
     db.commit()
     advance_workflow(db, task)
 
@@ -108,6 +136,7 @@ def record_task_failure(db, task: Task, error_message: str, execute_time_ms: flo
     記錄一次失敗。還有重試次數的話轉成 RETRYING 並回傳這次該等待的秒數
     （用於 self.retry(countdown=...)）。重試次數用完就標記 FAILED、串連取消下游，回傳 None。
     """
+    task.claimed_at = None
     if task.retry_count < task.max_retries:
         task.retry_count += 1
         task.status = TaskStatus.RETRYING
@@ -142,11 +171,59 @@ def queue_for_task_type(task_type: str) -> str:
     return DEDICATED_QUEUES.get(task_type, "celery")
 
 
-def dispatch_task(task: Task):
+def dispatch_task(task: Task, countdown: int | None = None):
     """派送一個 pending task 進 Celery 佇列——依 task_type 決定要進哪條 queue。"""
+    options = {"countdown": countdown} if countdown else {}
     execute_task.apply_async(
-        args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type)
+        args=[str(task.id)], priority=task.priority, queue=queue_for_task_type(task.task_type), **options
     )
+
+# RUNNING 停超過這麼久，就當作執行它的 worker 已經不在了（被殺掉、OOM、容器重啟）。
+# 必須明顯大於該類型正常執行的上限，否則會把還在跑的 task 當成死掉：
+# python/shell 最多跑 60 秒（sandbox.MAX_TIMEOUT_SECONDS），agent_step 呼叫 LLM 可能要好幾分鐘。
+STALE_RUNNING_AFTER = {"agent_step": timedelta(minutes=30)}
+DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=10)
+
+@celery_app.task(name="coworkify.recover_stale_tasks")
+def recover_stale_tasks():
+    db = SessionLocal()
+    try:
+        return recover_stale_tasks(db, datetime.utcnow())
+    finally:
+        db.close()
+
+def recover_stale_running_tasks(db, now:datetime) -> int:
+    """
+    把「認領之後 worker 就消失了」的 task 當成一次失敗處理，回傳處理了幾個。
+
+    跟 handler 丟出例外走同一條路（record_task_failure）：還有重試次數就轉 RETRYING、
+    重新派送；用完就標 FAILED、串連取消下游。所以一個每次都把 worker 弄死的 task
+    （例如 OOM）不會被無限重派。
+    """
+    shortest = min([DEFAULT_STALE_RUNNING_AFTER, *STALE_RUNNING_AFTER.values()])
+    candidates = db.scalars(
+        select(Task).where(
+            Task.status == TaskStatus.RUNNING,
+            Task.claimed_at.isnot(None),
+            Task.claimed_at < now - shortest,
+        )
+    ).all()
+
+    recovered = 0
+    for task in candidates:
+        limit = STALE_RUNNING_AFTER.get(task.task_type, DEFAULT_STALE_RUNNING_AFTER)
+        if task.claimed_at >= now - limit:
+            continue
+
+        minutes = int(limit.total_seconds() // 60)
+        countdown = record_task_failure(
+            db, task, f"Worker lost: still RUNNING {minutes} minutes after it was claimed"
+        )
+        if countdown is not None:
+            dispatch_task(task, countdown=countdown)
+        recovered += 1
+    return recovered
+
 
 def _downstream_task_ids(all_steps: list[WorkflowStep], from_task_ids) -> set:
     """沿 depends_on 往下游走訪，回傳所有受 from_task_ids 影響的 task id（不含起點自己）。"""

@@ -32,5 +32,8 @@ class Task(Base):
     # 非 None 代表這個 task 被「刪除」了：軟刪除，資料留著（給 workflow 詳情頁、
     # TaskLog 稽核紀錄用），只是從一般查詢（列表、單筆查詢）隱藏起來。
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
+    # 被 worker 認領成 RUNNING 的時間（UTC）。recover_stale_tasks 靠它找出「worker 已經
+    # 死掉、卻永遠停在 RUNNING」的 task。只有 RUNNING 時有值，結束（成功或失敗）就清掉。
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now(), onupdate=func.now())
