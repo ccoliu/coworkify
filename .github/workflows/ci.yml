@@ -59,11 +59,17 @@ jobs:
       - uses: actions/checkout@v4
 
       # agent_step depends on codoctopus, which is not on PyPI yet.
+      # 平常一律用上面釘住的 CODOCTOPUS_REF，同一個 Coworkify commit 重跑結果才會一樣；
+      # 每週排程改測 main，上游壞掉只會讓那一次排程變紅，不會擋到 PR；手動觸發可以指定任一個 ref。
       - name: Check out Codoctopus
         uses: actions/checkout@v4
         with:
           repository: ccoliu/Codoctopus
+          ref: ${{ github.event_name == 'schedule' && 'main' || inputs.codoctopus_ref || env.CODOCTOPUS_REF}}
           path: codoctopus-src
+
+      - name: Show Codoctopus version
+        run: git -C codoctopus-src log -1 --format='Codoctopus %H %s'
 
       - uses: actions/setup-python@v5
         with:
