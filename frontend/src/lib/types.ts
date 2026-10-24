@@ -168,6 +168,8 @@ export interface WorkflowSchedule {
   enabled: boolean
   next_run_at: string | null
   last_run_at: string | null
+  last_error: string | null
+  last_error_at: string | null
   created_at: string
   updated_at: string
   definition_name: string | null

@@ -253,7 +253,7 @@ POST /definitions/{definition_id}/runs
 
 Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at` 到期就依**定義當下的內容**建立一份新的 run 並派送根節點，再依 cron 表達式計算下一次執行時間。因為排程存的是 `definition_id` 而不是 steps 的複本，修改定義之後下一次觸發就會用新版。cron 以應用程式設定的時區（`Asia/Taipei`）解讀，跟 `next_run_at` 的顯示、比較邏輯保持一致。
 
-排程的 `input` 在存檔當下就依 `input_schema` 驗證，觸發時再驗一次；若定義改動後輸入不再合法，該次觸發會被跳過並記錄原因，時間照常往前推，不會卡住其他排程。
+排程的 `input` 在存檔當下就依 `input_schema` 驗證，觸發時再驗一次；若定義改動後輸入不再合法，該次觸發會被跳過，原因記在排程的 `last_error` / `last_error_at`（Schedules 頁面以紅字顯示），`last_run_at` 不變——它只代表「真的建立了 run」；時間照常往前推，不會卡住其他排程，下一次觸發成功就清掉錯誤。
 
 ### 其他
 | Method | Endpoint | 說明 |

@@ -25,7 +25,11 @@ class WorkflowSchedule(Base):
     steps: Mapped[List[Any]] = mapped_column(JSON, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    # 最近一次「成功建立 run」的時間。觸發失敗不會動到它，否則失敗看起來就像跑過了。
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # 最近一次觸發失敗的原因與時間；下一次觸發成功就清掉，所以有值 = 最近一次是失敗的。
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    last_error_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

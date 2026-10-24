@@ -85,7 +85,12 @@ export function ScheduleTable({ schedules }: { schedules: WorkflowSchedule[] }) 
                                     {sched.next_run_at ? formatRelativeTime(sched.next_run_at) : '—'}
                                 </td>
                                 <td className="px-4 py-3 text-ink-muted">
-                                    {sched.last_run_at ? formatDateTime(sched.last_run_at) : 'Never'}
+                                    {sched.last_error ? (
+                                        <div className="text-status-critical" title={sched.last_error}>
+                                            Failed · {sched.last_error_at ? formatDateTime(sched.last_error_at) : ''}
+                                            <div className="max-w-xs truncate text-xs">{sched.last_error}</div>
+                                        </div>
+                                    ) : sched.last_run_at ? formatDateTime(sched.last_run_at) : 'Never'}
                                 </td>
                                 <td className="px-4 py-3">
                                     <button

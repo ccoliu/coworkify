@@ -66,3 +66,5 @@ class WorkflowScheduleResponse(BaseModel):
     # API 另外掛上去的，方便列表直接顯示
     definition_name: Optional[str] = None
     definition_version: Optional[int] = None
+    last_error: Optional[str] = None
+    last_error_at: Optional[datetime] = None

@@ -252,7 +252,7 @@ POST /definitions/{definition_id}/runs
 
 Celery Beat checks all `enabled=true` schedules once a minute; when `next_run_at` is due, it creates a new run from **the definition as it is at that moment**, dispatches its root nodes, and computes the next run time from the cron expression. Because a schedule stores a `definition_id` rather than a copy of the steps, edits to the definition take effect on the next trigger. The cron expression is interpreted in the app's configured timezone (`Asia/Taipei`), consistent with how `next_run_at` is displayed and compared.
 
-A schedule's `input` is validated against the `input_schema` when it is saved, and again at trigger time. If a definition change makes the input invalid, that trigger is skipped with the reason logged, and the schedule still moves on to its next time, so other schedules are never blocked.
+A schedule's `input` is validated against the `input_schema` when it is saved, and again at trigger time. If a definition change makes the input invalid, that trigger is skipped and the reason is stored on the schedule as `last_error` / `last_error_at` (shown in red on the Schedules page), while `last_run_at` stays put — it only ever means "a run was actually created". The schedule still moves on to its next time, so other schedules are never blocked, and the next successful trigger clears the error.
 
 ### Other
 | Method | Endpoint | Description |
