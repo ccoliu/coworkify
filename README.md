@@ -9,7 +9,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，Locust壓測運行 150 用戶，30 秒 window，194.5 RPS。
+**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，以 Locust 模擬 150 個併發使用者、壓測 2 分鐘，吞吐量 194.5 RPS。
 
 ![alt text](<coworkify.png>)
 ---

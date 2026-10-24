@@ -147,3 +147,13 @@ def test_a_late_result_from_the_lost_worker_is_not_run_twice(db, worker_db, disp
     use_handler(monkeypatch, lambda payload: pytest.fail("handler must not run"))
     execute_task(str(task.id))
     assert reload(db, task).status == TaskStatus.SUCCESS
+
+def test_the_beat_entry_point_runs_recovery(db, worker_db, dispatched):
+    # Beat 呼叫的是沒有參數的 recover_stale_tasks；它要自己開 session、帶入現在時間
+    task = make_task(
+        db, status=TaskStatus.RUNNING, max_retries=3,
+        claimed_at=datetime.utcnow() - timedelta(hours=1),
+    )
+
+    assert executor.recover_stale_tasks() == 1
+    assert reload(db, task).status == TaskStatus.RETRYING

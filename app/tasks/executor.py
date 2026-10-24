@@ -188,7 +188,7 @@ DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=10)
 def recover_stale_tasks():
     db = SessionLocal()
     try:
-        return recover_stale_tasks(db, datetime.utcnow())
+        return recover_stale_running_tasks(db, datetime.utcnow())
     finally:
         db.close()
 
