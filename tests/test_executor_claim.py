@@ -78,6 +78,79 @@ def reload(db, task) -> Task:
 
 # --- 認領 -------------------------------------------------------------------
 
+def test_running_is_committed_before_the_handler_runs(db, db_engine, worker_db, dispatched, monkeypatch):
+    task = make_task(db)
+    seen = []
+
+    def handler(payload):
+        # 從另一個連線看：handler 一開始，RUNNING 就已經在資料庫裡了
+        with Session(db_engine) as other:
+            row = other.get(Task, task.id)
+            seen.append((row.status, row.claimed_at is not None))
+        return {"ok": True}
+
+    use_handler(monkeypatch, handler)
+    execute_task(str(task.id))
+
+    assert seen == [(TaskStatus.RUNNING, True)]
+    done = reload(db, task)
+    assert done.status == TaskStatus.SUCCESS
+    assert done.claimed_at is None
+
+def test_a_second_delivery_while_running_does_not_run_the_handler_again(db, worker_db, dispatched, monkeypatch):
+    task = make_task(db)
+    calls, second = [], []
+
+    def handler(payload):
+        calls.append(1)
+        # 第一次還在執行時，同一個 task 又被投遞一次
+        second.append(execute_task(str(task.id)))
+        return {"ok": True}
+    
+    use_handler(monkeypatch, handler)
+    execute_task(str(task.id))
+
+    assert len(calls) == 1
+    assert "was not claimed" in second[0]
+    assert logs_of(db, task) == [TaskStatus.SUCCESS]
+
+@pytest.mark.parametrize(
+    "status", [TaskStatus.RUNNING, TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.CANCELLED]
+)
+def test_a_task_that_is_not_runnable_is_left_alone(db, worker_db, dispatched, monkeypatch, status):
+    task = make_task(db, status=status)
+    use_handler(monkeypatch, lambda payload: pytest.failed("handler must not run"))
+
+    execute_task(str(task.id))
+    
+    assert reload(db, task).status == status
+    assert logs_of(db, task) == []
+
+def test_a_deleted_task_is_not_run(db, worker_db, dispatched, monkeypatch):
+    task = make_task(db, deleted_at=NOW)
+    use_handler(monkeypatch, lambda payload: pytest.failed("handler must not run"))
+
+    execute_task(str(task.id))
+
+    assert reload(db, task).status == TaskStatus.PENDING
+
+def test_a_handler_failure_releases_the_claim(db, worker_db, dispatched, monkeypatch):
+    task = make_task(db, max_retries=0)
+
+    def handler(payload):
+        raise RuntimeError("boom")
+
+    use_handler(monkeypatch, handler)
+    with pytest.raises(RuntimeError):
+        execute_task(str(task.id))
+
+    failed = reload(db, task)
+    assert failed.status == TaskStatus.FAILED
+    assert failed.claimed_at is None
+    assert logs_of(db, task) == [TaskStatus.FAILED]
+
+# --- 回收卡在 RUNNING 的 task ------------------------------------------------
+
 def test_a_stale_running_task_is_retried_and_can_run_again(db, worker_db, dispatched, monkeypatch):
     task = make_task(db,status=TaskStatus.RUNNING, max_retries=3, claimed_at=NOW - timedelta(minutes=11))
 

@@ -47,10 +47,8 @@ def execute_task(self, task_id: str):
         if task.deleted_at is not None:
             return f"Task {task_uuid} was deleted"
 
-        if task.status == TaskStatus.RUNNING or task.status == TaskStatus.SUCCESS or task.status == TaskStatus.FAILED:
-            return f"Task {task_uuid} is already {task.status}"
-
-        # 1. 更新狀態為 RUNNING (idempotent)
+        # 1. 認領：同一個 task 可能被投遞不只一次（join 的兩個上游同時完成、broker 重送），
+        #    只有把它從 PENDING/RETRYING 改成 RUNNING 的那一次能往下執行 handler。
         if not claim_task(db, task_uuid):
             return f"Task {task_uuid} was not claimed: it is {task.status}"
         claimed = True
