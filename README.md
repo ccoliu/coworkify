@@ -52,7 +52,7 @@
 | `condition` | 評估一個條件並回傳 `passed=true/false`，本身永遠成功；下游用 `branch_of` + `branch_when` 指向它來實現 if/else 分支 |
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。填了 `output_fields`（例如 `{"fixable": "boolean", "effort": ["small", "large"]}`）會改用 structured output，結果直接是那個物件，下游可以 `inputs["judge"]["fixable"]` 取值。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
 | `notify` | 送一則 Discord webhook 通知（標題、內文、連結、等級決定顏色），通常放在 workflow 最後一步。webhook URL 預設讀 worker 的 `DISCORD_WEBHOOK_URL` 環境變數——它等同密碼，不建議寫進 workflow 定義 |
-> 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。
+> 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。CI 測的是釘住的 Codoctopus 版本（`.github/workflows/ci.yml` 的 `CODOCTOPUS_REF`），本機要跟它一致就在 checkout 裡 `git checkout <那個 SHA>`；另有每週排程改測 Codoctopus 的 `main`，提早發現上游的破壞性改動。
 >
 > 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
 

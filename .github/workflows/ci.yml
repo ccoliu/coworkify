@@ -5,13 +5,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 每週一次改測 Codoctopus 的 main（見下方 Check out Codoctopus），提早發現上游的破壞性改動
+  schedule:
+    - cron: '0 3 * * 1' # 每週一早上 3 點（UTC）
   workflow_dispatch:
+    inputs:
+      codoctopus_ref:
+        description: "要測的 Codoctopus ref（branch / tag / SHA）；留空用 CODOCTOPUS_REF"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
+env:
+  # 測試用的 Codoctopus 版本。升級就改這一行，在它自己的 commit 裡讓 CI 跑一次。
+  # 本機 worker-agent 用的是 CODOCTOPUS_PATH 那份 checkout，要對齊就
+  #   git -C <codoctopus 目錄> checkout <這個 SHA>
+  CODOCTOPUS_REF: 2a7868b68368836212113fc1014021c9735224a5
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
