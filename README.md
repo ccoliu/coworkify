@@ -18,7 +18,7 @@
 
 - **完整的任務生命週期管理**：支援 `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled` 狀態機流轉。
 - **高性能非同步架構**：以 FastAPI 作為核心 API 閘道，結合 Redis 實現低延遲訊息佇列 (Message Broker)。
-- **任務優先級調度 (Priority Queue)**：支援任務加權插隊，優先處理高優先級核心任務。
+- **任務優先級調度 (Priority Queue)**：每個任務帶 0–9 的優先度，**數字越小越先被 worker 取走**（0 最優先、9 最後，這是 Celery 搭配 Redis broker 的規則），讓重要任務插隊。
 - **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
 - **彈性重試機制**：內建自訂重試次數 (`max_retries`) 與指數退避策略 (Exponential Backoff)。
 - **DAG Workflow 編排**：支援多個任務依照依賴關係串接執行（`task1 → task2 → task3`，含分支/合併），單一節點失敗會自動連鎖取消下游節點。

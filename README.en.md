@@ -18,7 +18,7 @@ English | [繁體中文](README.md)
 
 - **Full task lifecycle management**: State machine covering `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled`.
 - **High-performance async architecture**: FastAPI as the core API gateway, backed by Redis for a low-latency message broker.
-- **Priority queue scheduling**: Weighted task priority so high-priority tasks jump the queue.
+- **Priority queue scheduling**: Each task carries a priority from 0 to 9, and **lower numbers are taken by workers first** (0 is the most urgent and 9 the least — the rule Celery uses with a Redis broker), so important tasks can jump the queue.
 - **Scheduling & delayed execution**: Supports immediate execution, execution at a specific time, and recurring schedules.
 - **Resilient retry mechanism**: Configurable `max_retries` with exponential backoff.
 - **DAG workflow orchestration**: Chain multiple tasks by dependency (`task1 → task2 → task3`, including branching/merging); a single node failure automatically cascades cancellation to downstream nodes.

@@ -68,7 +68,7 @@ const COMMON_FIELDS: [string, string][] = [
     ['Step key', '這一步的識別碼，其他步驟用它取值（inputs["<key>"]、{{steps.<key>.result}}）。只能用英數字與底線'],
     ['Name', '顯示用的名稱，可以隨意取；不影響取值'],
     ['Task type', '換類型會重設這一步的專屬欄位'],
-    ['Priority', '0 最低，數字越大越優先被 worker 取走。預設 3'],
+    ['Priority', '0 最優先，數字越大越晚被 worker 取走（0–9，Celery 搭配 Redis 的規則）。預設 3'],
     ['Max retries', '這一步自己失敗時的重試次數，採指數退避。預設 3；用完才算整條 workflow 失敗'],
     ['Depends on', '在畫布上拉線就是依賴；上游全部成功後這一步才會被派送'],
     ['分支', '從 condition 節點的 true / false 出口拉線，等同設定 branch_of 與 branch_when'],

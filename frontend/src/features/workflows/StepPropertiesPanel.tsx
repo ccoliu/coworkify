@@ -91,9 +91,11 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                             id="step-priority"
                             type="number"
                             min={0}
+                            max={9}
                             value={step.priority}
                             onChange={(e) => onUpdate(step.uid, { priority: Number(e.target.value) })}
                         />
+                        <p className="mt-1 text-xs text-ink-muted">0 最優先，9 最後</p>
                     </div>
                     <div>
                         <Label htmlFor="step-retries">Max retries</Label>

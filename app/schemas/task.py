@@ -7,7 +7,7 @@ class TaskCreate(BaseModel):
     name: str = Field(..., max_length=255, description="任務名稱")
     task_type: str = Field(..., max_length=50, description="任務類型")
     payload: Dict[str, Any] = Field(default_factory=dict, description="任務參數")
-    priority: int = Field(default=0, ge=0, le=10, description="任務優先級(0~10)")
+    priority: int = Field(default=0, ge=0, le=9, description="0 最優先、9 最後（Celery 搭配 Redis broker 的規則）")
     max_retries: int = Field(default=3, ge=0, description="最大重試次數")
     scheduled_at: Optional[datetime] = Field(default=None, description="預定執行時間")
 

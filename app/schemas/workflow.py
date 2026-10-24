@@ -16,7 +16,7 @@ class WorkflowStepCreate(BaseModel):
     name: str = Field(..., max_length=255)
     task_type: str = Field(..., max_length=50)
     payload: Dict[str, Any] = Field(default_factory=dict)
-    priority: int = Field(default=3, ge=0)
+    priority: int = Field(default=3, ge=0, le=9, description="0 最優先、9 最後（Celery 搭配 Redis broker 的規則）")
     max_retries: int = Field(default=3, ge=0)
     depends_on: List[str] = Field(default_factory=list, description="依賴的其他 step 的 key")
     for_each: Optional[str] = Field(
