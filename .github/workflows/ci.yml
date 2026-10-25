@@ -131,9 +131,9 @@ jobs:
       JWT_SECRET: ci-only-jwt-secret
       E2E_BASE_URL: http://localhost:8000
     steps:
-      - uses: actions/checkout@4
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
