@@ -149,7 +149,7 @@ jobs:
       
       - name: Start the API and a Celery worker
         run: |
-          uvicorn app.main:app --port:8000 > api.log 2>&1 &
+          uvicorn app.main:app --port 8000 > api.log 2>&1 &
           # worker 用 root 跑，跟正式環境的容器一樣。sandbox 把子程序的 RLIMIT_NPROC 設成 32，
           # 這個上限算的是「同一個使用者的所有 process 與 thread」，而且只對非 root 生效——
           # runner 使用者光是 runner 本身就有幾十個 thread，shell 步驟裡的 $(...) 會 fork 失敗。
