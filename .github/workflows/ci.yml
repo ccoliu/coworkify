@@ -97,6 +97,78 @@ jobs:
             coverage.xml
             junit.xml
 
+  e2e:
+    # 其他 job 都把 Celery 和 Redis 換掉了；這個 job 起真的 API、worker 和 Redis，
+    # 從外面用 HTTP / WebSocket 打。跟單元測試分開跑，PR 的快速回饋不會被它拖慢。
+    name: End-to-end (API + Celery worker + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-only-jwt-secret
+      E2E_BASE_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@4
+
+      - uses: actions/setup-python@5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      # 不裝 Codoctopus：這裡的 workflow 沒有 agent_step，worker 也只吃預設的 celery queue
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      - name: Start the API and a Celery worker
+        run: |
+          uvicorn app.main:app --port:8000 > api.log 2>&1 &
+          # worker 用 root 跑，跟正式環境的容器一樣。sandbox 把子程序的 RLIMIT_NPROC 設成 32，
+          # 這個上限算的是「同一個使用者的所有 process 與 thread」，而且只對非 root 生效——
+          # runner 使用者光是 runner 本身就有幾十個 thread，shell 步驟裡的 $(...) 會 fork 失敗。
+          sudo -E env "PATH=$PATH" celery -A app.celery_app.celery_app worker -Q celery --concurrency=2 --loglevel=info > worker.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf localhost:8000/health && exit 0
+            sleep 1
+          done
+          echo "API did not come up"; cat api.log; exit 1
+
+      - name: Run end-to-end tests
+        run: pytest tests/e2e -q -rs
+
+      - name: Show API and worker logs
+        if: failure()
+        run: |
+          echo "::group::api.log"; cat api.log; echo "::endgroup::"
+          echo "::group::worker.log"; cat worker.log; echo "::endgroup::"
+
   frontend-build:
     name: Frontend lint and build
     runs-on: ubuntu-latest

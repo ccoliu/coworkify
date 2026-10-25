@@ -144,6 +144,7 @@ Run these on the host, not inside a container. Most tests connect to the Postgre
 - `test_executor_*.py`: workflow dispatch, `inputs` assembly, for_each / reduce (including expanding to 0 items), branch cancellation, failure and retry, task claiming, and recovery of tasks orphaned in RUNNING
 - `test_api_*.py`: the real app through FastAPI's `TestClient` — registration, login and JWT, rate limiting, task create / query / soft delete, definition versioning, run input validation (422), rerun vs retry, schedule CRUD and promote-to-schedule
 - `test_scheduler.py`: cron triggering, failure recording, and the Taipei timezone
+- `e2e/`: replaces nothing — drives a running API + Celery worker + Redis from the outside over HTTP and WebSocket: a workflow with a branch and for_each / reduce runs to completion, a join under real concurrency runs once, `self.retry` backs off and retries, and status changes reach the WebSocket. They only run when `E2E_BASE_URL` is set (e.g. `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`); CI starts real services for them in a separate `e2e` job
 
 CI enforces a coverage floor with `--cov-fail-under`. Every directory under `app/` has an `__init__.py`, so files no test imports still count as 0% instead of silently dropping out of the total.
 
