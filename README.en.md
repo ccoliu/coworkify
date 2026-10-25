@@ -139,7 +139,13 @@ After registering an account on the login page, open **Getting started** in the 
 pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
-Run these on the host, not inside a container. Most tests need no external services. `tests/test_executor_workflow.py` holds the executor integration tests: they connect to the Postgres at `.env`'s `DATABASE_URL`, create a separate `<POSTGRES_DB>_test` database, and walk workflows through dispatch, `inputs` assembly, for_each / reduce (including expanding to 0 items), branch cancellation, failure, and retry. Celery dispatch is replaced with a recorder, so no worker or Redis is needed. If the database is unreachable these tests are skipped — add `-rs` to see why — and `TEST_DATABASE_URL` points them somewhere else.
+Run these on the host, not inside a container. Most tests connect to the Postgres at `.env`'s `DATABASE_URL`, create a separate `<POSTGRES_DB>_test` database, and empty it after every test. Celery dispatch is replaced with a recorder and the rate limiter's Redis with a fake, so no worker or Redis is needed. If the database is unreachable these tests are skipped — add `-rs` to see why — and `TEST_DATABASE_URL` points them somewhere else.
+
+- `test_executor_*.py`: workflow dispatch, `inputs` assembly, for_each / reduce (including expanding to 0 items), branch cancellation, failure and retry, task claiming, and recovery of tasks orphaned in RUNNING
+- `test_api_*.py`: the real app through FastAPI's `TestClient` — registration, login and JWT, rate limiting, task create / query / soft delete, definition versioning, run input validation (422), rerun vs retry, schedule CRUD and promote-to-schedule
+- `test_scheduler.py`: cron triggering, failure recording, and the Taipei timezone
+
+CI enforces a coverage floor with `--cov-fail-under`. Every directory under `app/` has an `__init__.py`, so files no test imports still count as 0% instead of silently dropping out of the total.
 
 > If a native Postgres installed on the host also listens on 5432, `localhost:5432` reaches that one instead and fails with `password authentication failed`. Change both `POSTGRES_PORT` and `DATABASE_URL` in `.env` to another port (e.g. 5433), then run `docker compose up -d postgres`.
 

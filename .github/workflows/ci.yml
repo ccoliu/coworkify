@@ -86,7 +86,7 @@ jobs:
           pip install -e "./codoctopus-src[anthropic]"
 
       - name: Run tests with coverage
-        run: pytest -q --cov=app --cov-report=term-missing --cov-report=xml --junitxml=junit.xml
+        run: pytest -q --cov=app --cov-report=term-missing --cov-report=xml --junitxml=junit.xml --cov-fail-under=75
 
       - name: Upload test reports
         if: always()

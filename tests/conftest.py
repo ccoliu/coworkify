@@ -66,6 +66,86 @@ def db(db_engine):
     tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
     with db_engine.begin() as conn:
         conn.execute(text(f"TRUNCATE {tables} CASCADE"))
+
+# --- API 測試用 ----------------------------------------------------------------
+
+class _FakePipeline:
+    """RateLimiter 只用到 pipeline 的 zremrangebyscore/zcard/zadd/expire/execute。"""
+
+    def __init__(self, redis):
+        self._redis = redis
     
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: self
+    
+    async def execute(self):
+        # 第一次 execute 的回傳是 [移除筆數, 視窗內請求數]，第二次的內容 RateLimiter 不看
+        return [0, self._redis.requests_in_window]
+
+class FakeRedis:
+    """取代限流器的 Redis：CI 沒有 Redis，而限流不是這些測試要驗的東西。"""
+
+    def __init__(self):
+        self.requests_in_window = 0
+    
+    def pipeline(self):
+        return _FakePipeline(self)
+
+
+@pytest.fixture
+def client(db, db_engine, monkeypatch):
+    """
+    打真正的 FastAPI app，資料庫換成測試庫；Celery 派送與 Redis 推播換成記錄器。
+    依賴 db fixture，所以每個測試結束後一樣會清空所有表。
+
+    不用 `with TestClient(...)`：那會觸發 lifespan，對 .env 裡的開發用資料庫跑 create_all。
+    """
+    from fastapi.testclient import TestClient
+
+    import app.api.tasks as tasks_api
+    from app.core import rate_limit
+    from app.db import get_db
+    from app.main import app as fastapi_app
+    from app.tasks import executor
+
+    TestSession = sessionmaker(bind=db_engine, autoflush=False)
+
+    def override_get_db():
+        session = TestSession()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    fastapi_app.dependency_overrides[get_db] = override_get_db
+
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(rate_limit, "redis_client", fake_redis)
+
+    dispatched: list = []
+    scheduled: list = []
+
+    def record_dispatch(task, countdown=None):
+        dispatched.append(task.id)
+
+    monkeypatch.setattr(executor, "dispatch_task", record_dispatch)
+    monkeypatch.setattr(tasks_api, "dispatch_task", record_dispatch)
+    monkeypatch.setattr(executor.execute_task, "apply_async", lambda args, **options: scheduled.append((args, options)))
+    monkeypatch.setattr(executor, "notify_status_change", lambda *a, **kw: None)
+
+    test_client = TestClient(fastapi_app)
+    test_client.dispatched = dispatched
+    test_client.scheduled = scheduled
+    test_client.fake_redis = fake_redis
+
+    yield test_client
+    fastapi_app.dependency_overrides.clear()
+
+@pytest.fixture
+def auth(client):
+    """註冊一個使用者，回傳帶 JWT 的 headers。"""
+    res = client.post("/auth/register", json={"username": "alice", "password": "correct-horse"})
+    assert res.status_code == 201, res.text
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 

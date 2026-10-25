@@ -140,7 +140,13 @@ docker-compose up -d --build
 pip install -r requirements-dev.txt
 python -m pytest tests -q
 ```
-在主機上執行（不是在容器裡）。大部分測試不需要任何外部服務；`tests/test_executor_workflow.py` 是 executor 的整合測試，會連 `.env` 的 `DATABASE_URL` 那台 Postgres，另建一個 `<POSTGRES_DB>_test` 資料庫，把 workflow 的派送、`inputs` 組裝、for_each / reduce（包含展開成 0 項）、分支取消、失敗與續跑整條走過一遍。Celery 派送被換成記錄器，不需要 worker 和 Redis。連不上資料庫時這組測試會 skip，加 `-rs` 可以看到原因；要改連別台就設 `TEST_DATABASE_URL`。
+在主機上執行（不是在容器裡）。大部分測試會連 `.env` 的 `DATABASE_URL` 那台 Postgres，另建一個 `<POSTGRES_DB>_test` 資料庫，每個測試結束後清空；Celery 派送被換成記錄器、限流器的 Redis 換成假的，所以不需要 worker 和 Redis。連不上資料庫時這些測試會 skip，加 `-rs` 可以看到原因；要改連別台就設 `TEST_DATABASE_URL`。
+
+- `test_executor_*.py`：workflow 的派送、`inputs` 組裝、for_each / reduce（包含展開成 0 項）、分支取消、失敗與續跑、task 認領與回收卡在 RUNNING 的 task
+- `test_api_*.py`：用 FastAPI `TestClient` 打真正的 app——註冊登入與 JWT、限流、task 的建立／查詢／軟刪除、定義的版本號、run 的輸入驗證（422）、rerun 與 retry、排程的 CRUD 與 promote-to-schedule
+- `test_scheduler.py`：cron 排程的觸發、失敗記錄、台北時區
+
+CI 以 `--cov-fail-under` 設了覆蓋率下限。`app/` 底下每個目錄都有 `__init__.py`，沒被任何測試 import 的檔案才會以 0% 算進總數，數字不會偏高。
 
 > 主機上如果另外裝了原生 Postgres 並佔用 5432，`localhost:5432` 會連到那一台，錯誤訊息是 `password authentication failed`。這時把 `.env` 的 `POSTGRES_PORT` 和 `DATABASE_URL` 都改成別的 port（例如 5433），再執行 `docker compose up -d postgres`。
 

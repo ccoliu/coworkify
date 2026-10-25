@@ -21,8 +21,10 @@ class WorkflowSchedule(Base):
     )
     # 每次觸發要餵給定義的輸入，格式與規則同 POST /definitions/{id}/runs
     input: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
-    # 舊排程（definition_id 是 None）留下的 step 快照。新排程一律指向定義，不再複製 steps。
-    steps: Mapped[List[Any]] = mapped_column(JSON, nullable=False)
+    # 舊排程（definition_id 是 None）留下的 step 快照。新排程一律指向定義，不再複製 steps，
+    # 所以是 None。正式庫在 2026_09_17 的 migration 已經拿掉 NOT NULL；這裡要跟著一致，
+    # 否則從 model 建出來的資料庫（新環境、測試庫）一建立排程就違反 NOT NULL。
+    steps: Mapped[Optional[List[Any]]] = mapped_column(JSON, nullable=True, default=None)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     # 最近一次「成功建立 run」的時間。觸發失敗不會動到它，否則失敗看起來就像跑過了。
