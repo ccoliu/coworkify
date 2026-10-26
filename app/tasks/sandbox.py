@@ -131,7 +131,7 @@ def run_sandboxed(
         )
 
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            raw_stdout, raw_stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill_process_group(proc)
             raw_stdout, _ = proc.communicate()
