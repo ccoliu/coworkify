@@ -53,7 +53,10 @@ def _validate_public_url(url: str) -> None:
     
     for info in resolved:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        # 用「不是公開位址」而不是逐一列出私有／迴路／link-local…：黑名單一定會漏。
+        # 例如 100.64.0.0/10（電信 NAT 共享段，阿里雲 metadata 100.100.100.200 就在裡面）
+        # 不是 is_private，舊的寫法擋不到；is_global 為 False 的一律拒絕就涵蓋了。
+        if not ip.is_global or ip.is_multicast:
             raise ValueError(f"Hostname resolved to a forbidden IP address: {ip}")
 
 def handle_http_request(payload: Dict[str, Any]) -> Dict[str, Any]:

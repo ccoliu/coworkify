@@ -4,7 +4,8 @@
 # This is NOT a real sandbox: the child process still shares the worker
 # container's filesystem and network namespace. What this module actually
 # buys:
-#   - a hard wall-clock timeout
+#   - a hard wall-clock timeout that kills the whole process group, so
+#     background children (`sleep 600 &`) don't outlive the step
 #   - CPU time / memory / process-count / output-size limits (Linux rlimits)
 #   - a stripped environment, so DATABASE_URL / JWT_SECRET / API keys etc.
 #     sitting in the worker's own os.environ can't leak into user code
@@ -18,6 +19,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -43,7 +46,11 @@ DEFAULT_TIMEOUT_SECONDS = 10
 MAX_OUTPUT_CHARS = 4000
 _MEMORY_LIMIT_BYTES = 256 * 1024 * 1024  # 256MB address space
 _FSIZE_LIMIT_BYTES = 10 * 1024 * 1024  # 10MB max file a child process may write
-_NPROC_LIMIT = 32
+# 刻意不設 RLIMIT_NPROC：它算的是「同一個 UID 在整台機器上的所有 process 與 thread」，
+# 不是這個 sandbox 自己的。worker 用 root 跑時它不生效；不用 root 跑時，同一個 UID 底下
+# 只要已經有幾十個 thread（CI runner、同機的其他容器），shell 的 $(...) 一 fork 就失敗。
+# 限制 fork 數量要靠容器的 pids limit；逾時則把整個 process group 一起殺掉（見 run_sandboxed）。
+#_NPROC_LIMIT = 32
 
 # 只留執行必要的環境變數；worker 本身的 DATABASE_URL / REDIS_URL / JWT_SECRET /
 # ANTHROPIC_API_KEY 等機密一律不繼承給使用者程式碼。
@@ -72,11 +79,19 @@ def _rlimits(cpu_seconds: int):
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
         resource.setrlimit(resource.RLIMIT_AS, (_MEMORY_LIMIT_BYTES, _MEMORY_LIMIT_BYTES))
         resource.setrlimit(resource.RLIMIT_FSIZE, (_FSIZE_LIMIT_BYTES, _FSIZE_LIMIT_BYTES))
-        resource.setrlimit(resource.RLIMIT_NPROC, (_NPROC_LIMIT, _NPROC_LIMIT))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     return _set_limits
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """殺掉整個 process group（POSIX）；沒有 process group 的平台退回只殺子程序。"""
+    if resource is None:
+        proc.kill()
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 def _truncate(text: str) -> str:
     if len(text) <= MAX_OUTPUT_CHARS:
@@ -101,22 +116,29 @@ def run_sandboxed(
 
     with tempfile.TemporaryDirectory(prefix="coworkify-sandbox-") as tmpdir:
         args = build_args(tmpdir) if callable(build_args) else build_args
+        # start_new_session：子程序自成一個 process group，逾時時才能連同它 fork 出去的
+        # 背景程序一起殺掉。subprocess.run(timeout=...) 只會殺直接的子程序。
+        proc = subprocess.Popen(
+            args,
+            shell=shell,
+            cwd=tmpdir,
+            env=_minimal_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            preexec_fn=_rlimits(timeout),
+            start_new_session=resource is not None,
+        )
+
         try:
-            proc = subprocess.run(
-                args,
-                shell=shell,
-                cwd=tmpdir,
-                env=_minimal_env(),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                preexec_fn=_rlimits(timeout),
-            )
-        except subprocess.TimeoutExpired as exc:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            raw_stdout, _ = proc.communicate()
             raise RuntimeError(
-                f"Timed out after {timeout}s. "
-                f"stdout so far: {_truncate((exc.stdout or ''))!r}"
-            ) from exc
+                f"Timed out after {timeout}s."
+                f"stdout so far: {_truncate((raw_stdout or ''))!r}"
+            )
         
         # 必須在 with 裡面讀：離開這個區塊暫存目錄就被刪了
         if result_file:
@@ -130,15 +152,13 @@ def run_sandboxed(
                     )
                 result_raw = path.read_text(encoding="utf-8")
 
-    stdout = _truncate(proc.stdout or "")
-    stderr = _truncate(proc.stderr or "")
+    stdout = _truncate(raw_stdout or "")
+    stderr = _truncate(raw_stderr or "")
 
     if proc.returncode < 0:
         # 負的 returncode = 被訊號殺掉。常見成因是 RLIMIT_CPU 觸發的 SIGKILL——
         # 這個機制常常搶在 subprocess.run 自己的 timeout= 機制前面先動手，
         # 導致這裡走的是「正常拿到已死 process」而不是 TimeoutExpired 那個分支。
-        import signal
-
         try:
             sig_name = signal.Signals(-proc.returncode).name
         except ValueError:

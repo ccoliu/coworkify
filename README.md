@@ -145,6 +145,8 @@ python -m pytest tests -q
 - `test_executor_*.py`：workflow 的派送、`inputs` 組裝、for_each / reduce（包含展開成 0 項）、分支取消、失敗與續跑、task 認領與回收卡在 RUNNING 的 task
 - `test_api_*.py`：用 FastAPI `TestClient` 打真正的 app——註冊登入與 JWT、限流、task 的建立／查詢／軟刪除、定義的版本號、run 的輸入驗證（422）、rerun 與 retry、排程的 CRUD 與 promote-to-schedule
 - `test_scheduler.py`：cron 排程的觸發、失敗記錄、台北時區
+- `test_handlers.py`：SSRF 防護（內網、cloud metadata、IPv4-mapped、轉址的每一跳）、`http_request`、`fetch_page` 的欄位擷取與大小上限、`notify`、`condition`、`input`。網路與 DNS 全部替換，不會真的連線
+- `test_sandbox.py`：真的起 subprocess 跑 `python` / `shell` 步驟——回傳值與 `inputs`、`get_input`、不繼承 worker 的機密環境變數、逾時連同背景子程序一起殺掉、記憶體上限。只在 Linux 上執行（Windows 會 skip）
 - `e2e/`：不替換任何東西，對一套正在跑的 API + Celery worker + Redis 從外部打 HTTP / WebSocket——分支加 for_each / reduce 的 workflow 跑到完成、併發下的 join 只執行一次、`self.retry` 的退避重試、WebSocket 推播。只在設了 `E2E_BASE_URL` 時執行（例如 `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`），CI 在獨立的 `e2e` job 裡起真的服務來跑
 
 CI 以 `--cov-fail-under` 設了覆蓋率下限。`app/` 底下每個目錄都有 `__init__.py`，沒被任何測試 import 的檔案才會以 0% 算進總數，數字不會偏高。
