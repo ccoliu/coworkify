@@ -32,6 +32,7 @@
 - **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
+- **資源隔離**：定義、run、task、排程都屬於建立它的使用者——系統代替使用者建立的也一樣（run 裡的 task、for_each 展開的 task、排程觸發的 run）。別人的資源一律回 404（不回 403，免得透露那個 id 存在）；`/ws/tasks` 也只推送自己的 task。
 - **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化；workflow 詳情頁用同一套畫布以唯讀模式呈現執行進度，節點依狀態上色、WebSocket 即時更新。
 
 ---
@@ -270,7 +271,7 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 | `GET` | `/health` | API 伺服器健康檢查 |
 | `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 
-`/tasks`、`/definitions`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。
+`/tasks`、`/definitions`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。每個使用者只看得到、改得了自己的資源。`/ws/tasks` 因為瀏覽器的 WebSocket 不能自訂 header，JWT 放在 query string：`/ws/tasks?token=<JWT>`。
 
 ---
 

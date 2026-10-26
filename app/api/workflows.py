@@ -15,6 +15,7 @@ from app.schemas.workflow import WorkflowCreate, WorkflowResponse
 from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
 from app.tasks.executor import execute_task, create_workflow_from_steps, retry_workflow_from_failure
 from app.core.security import get_current_user
+from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import RateLimiter
 from app.core.cron import compute_next_run
 
@@ -23,6 +24,9 @@ router = APIRouter(
     tags=['Workflows'],
     dependencies=[Depends(get_current_user), Depends(RateLimiter(times=5000, seconds=1))]
 )
+
+def _get_workflow_or_404(db: Session, workflow_id: UUID, user: User) -> Workflow:
+    return get_owned_or_404(db, Workflow, workflow_id, user, "Workflow not found")
 
 def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
     task_ids = [s.task_id for s in steps]
@@ -38,9 +42,13 @@ def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
             s.task_type = task.task_type
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
-def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):
+def create_workflow(
+    payload: WorkflowCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     workflow = create_workflow_from_steps(
-        db, payload.name, [s.model_dump() for s in payload.steps]
+        db, payload.name, [s.model_dump() for s in payload.steps], created_by=current_user.id
     )
     _attach_task_details(db, workflow.steps)
     return workflow
@@ -49,9 +57,10 @@ def create_workflow(payload: WorkflowCreate, db: Session = Depends(get_db)):
 def list_workflows(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    stmt = select(Workflow).order_by(Workflow.created_at.desc()).offset(offset).limit(limit)
+    stmt = select(Workflow).where(Workflow.created_by == current_user.id).order_by(Workflow.created_at.desc()).offset(offset).limit(limit)
     workflows = db.scalars(stmt).all()
 
     all_steps = [s for w in workflows for s in w.steps]
@@ -60,10 +69,12 @@ def list_workflows(
     
 
 @router.get("/{workflow_id}", response_model=WorkflowResponse)
-def get_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
-    workflow = db.get(Workflow, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+def get_workflow(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workflow = _get_workflow_or_404(db, workflow_id, current_user)
 
     _attach_task_details(db, workflow.steps)
     return workflow
@@ -80,9 +91,7 @@ def promote_workflow_to_schedule(
     current_user: User = Depends(get_current_user),
 ):
     """把這次 run 變成週期性排程：指向它所屬的定義，並沿用同一份輸入。"""
-    workflow = db.get(Workflow, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    workflow = _get_workflow_or_404(db, workflow_id, current_user)
     if not workflow.definition_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -104,14 +113,16 @@ def promote_workflow_to_schedule(
     return schedule
 
 @router.post("/{workflow_id}/rerun", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
-def rerun_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
+def rerun_workflow(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     用同一份 step 樣板再跑一次。刻意建立一個「全新的 workflow」而不是重置舊的——
     舊那次的每個 task 狀態與 task_logs 都完整保留，才查得出兩次跑的差異。
     """
-    workflow = db.get(Workflow, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    workflow = _get_workflow_or_404(db, workflow_id, current_user)
     if not workflow.steps_template:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -126,19 +137,22 @@ def rerun_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
         definition_id=workflow.definition_id,
         definition_version=workflow.definition_version,
         run_input=workflow.input,
+        created_by=current_user.id,
     )
     _attach_task_details(db, new_workflow.steps)
     return new_workflow
 
 @router.post("/{workflow_id}/retry", response_model=WorkflowResponse)
-def retry_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
+def retry_workflow(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     從失敗的步驟續跑同一個 workflow（不是建立新的）——已經成功的上游不會重跑，
     適合上游很貴的情況。整條重來請改用 /rerun。
     """
-    workflow = db.get(Workflow, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    workflow = _get_workflow_or_404(db, workflow_id, current_user)
     if workflow.status != WorkFlowStatus.FAILED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -158,10 +172,12 @@ def retry_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_workflow(workflow_id: UUID, db: Session = Depends(get_db)):
-    workflow = db.get(Workflow, workflow_id)
-    if not workflow:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+def delete_workflow(
+    workflow_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workflow = _get_workflow_or_404(db, workflow_id, current_user)
 
     task_ids = [s.task_id for s in workflow.steps]
 

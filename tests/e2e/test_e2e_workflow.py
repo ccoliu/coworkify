@@ -30,15 +30,28 @@ pytestmark = pytest.mark.skipif(not BASE_URL, reason="set E2E_BASE_URL to run ag
 TIMEOUT_SECONDS = 90
 
 
-@pytest.fixture(scope="module")
-def api():
+def register():
     client = httpx.Client(base_url=BASE_URL, timeout=10)
     res = client.post(
         "/auth/register",
-        json={"username": f"e2e-{uuid.uuid4().hex[:10]}", "password": "e2e-password"}
+        json={"username": f"e2e-{uuid.uuid4().hex[:10]}", "password": "e2e-password"},
     )
     assert res.status_code == 201, res.text
-    client.headers["Authorization"] = f"Bearer {res.json()['access_token']}"
+    client.token = res.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {client.token}"
+    return client
+
+
+@pytest.fixture(scope="module")
+def api():
+    client = register()
+    yield client
+    client.close()
+
+
+@pytest.fixture(scope="module")
+def other_api():
+    client = register()
     yield client
     client.close()
 
@@ -128,23 +141,35 @@ def test_a_failing_task_is_retried_with_backoff_then_fails(api):
     assert [log["status"] for log in logs] == ["retrying", "failed"]
     assert "boom" in logs[-1]["error_message"]
 
-def test_status_changes_are_pushed_over_the_websocket(api):
+def test_status_changes_are_pushed_over_the_websocket_to_their_owner_only(api, other_api):
     from websockets.sync.client import connect
 
-    ws_url = BASE_URL.replace("http", "ws", 1) + "/ws/tasks"
+    ws_url = BASE_URL.replace("http", "ws", 1) + f"/ws/tasks?token={api.token}"
     with connect(ws_url) as ws:
         # 伺服器在 accept 之後才訂閱 Redis 頻道，先等它訂好，免得漏掉最早的事件
         time.sleep(1)
-        task = api.post("/tasks/", json={"name": "ping", "task_type": "echo", "payload": {"message": "hi"}}).json()
+        # 別人的 task 先建立、先跑完：如果會被推過來，一定會在自己的事件之前出現
+        theirs = other_api.post("/tasks/", json={"name": "not yours", "task_type": "echo"}).json()
+        poll(lambda: other_api.get(f"/tasks/{theirs['id']}").json(), lambda t: t["status"] == "success", "other task")
+        mine = api.post("/tasks/", json={"name": "ping", "task_type": "echo", "payload": {"message": "hi"}}).json()
 
         seen = []
         deadline = time.monotonic() + TIMEOUT_SECONDS
-        while "success" not in seen:
+        while ("success", mine["id"]) not in seen:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                pytest.fail(f"no success sent for task {task['id']}; saw {seen}")
+                pytest.fail(f"no success event for task {mine['id']}; saw {seen}")
             event = json.loads(ws.recv(timeout=remaining))
-            if event["task_id"] == task["id"]:
-                seen.append(event["status"])
-        
-    assert seen == ["running", "success"]
+            seen.append((event["status"], event["task_id"]))
+
+    assert seen == [("running", mine["id"]), ("success", mine["id"])]
+
+
+def test_the_websocket_refuses_a_connection_without_a_token():
+    from websockets.exceptions import InvalidStatus
+    from websockets.sync.client import connect
+
+    # 伺服器在 accept 之前就關閉，對真正的 client 來說是握手被拒（HTTP 403）
+    with pytest.raises(InvalidStatus) as exc:
+        connect(BASE_URL.replace("http", "ws", 1) + "/ws/tasks")
+    assert exc.value.response.status_code == 403

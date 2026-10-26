@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.workflows import _attach_task_details
+from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import RateLimiter
 from app.core.security import get_current_user
 from app.db import get_db
@@ -26,14 +27,8 @@ router = APIRouter(
     dependencies=[Depends(get_current_user), Depends(RateLimiter(times=5000, seconds=1))]
 )
 
-def _get_definition_or_404(db: Session, definitions_id: UUID) -> WorkflowDefinition:
-    definition = db.get(WorkflowDefinition, definitions_id)
-    if not definition:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Workflow definition not found"
-        )
-    return definition
+def _get_definition_or_404(db: Session, definition_id: UUID, user: User) -> WorkflowDefinition:
+    return get_owned_or_404(db, WorkflowDefinition, definition_id, user, "Workflow definition not found")
 
 def _attach_run_stats(db: Session, definitions: list[WorkflowDefinition]) -> None:
     """掛上 run_count 與 last_run，兩條查詢搞定整頁，不逐筆查。"""
@@ -84,10 +79,12 @@ def create_definition(
 def list_definitions(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     definitions = db.scalars(
         select(WorkflowDefinition)
+        .where(WorkflowDefinition.created_by == current_user.id)
         .order_by(WorkflowDefinition.updated_at.desc())
         .limit(limit)
         .offset(offset)
@@ -96,8 +93,12 @@ def list_definitions(
     return definitions 
 
 @router.get("/{definition_id}", response_model=WorkflowDefinitionResponse)
-def get_definition(definition_id: UUID, db: Session = Depends(get_db)):
-    definition = _get_definition_or_404(db, definition_id)
+def get_definition(
+    definition_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    definition = _get_definition_or_404(db, definition_id, current_user)
     _attach_run_stats(db, [definition])
     return definition
 
@@ -106,9 +107,10 @@ def replace_definition(
     definition_id: UUID,
     payload: WorkflowDefinitionCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """整份取代。已經跑過的 run 各自留有 steps_template 快照，不受影響。"""
-    definition = _get_definition_or_404(db, definition_id)
+    definition = _get_definition_or_404(db, definition_id, current_user)
     
     new_steps = [s.model_dump() for s in payload.steps]
     new_schema = [f.model_dump() for f in payload.input_schema]
@@ -129,8 +131,9 @@ def run_definition(
     definition_id: UUID,
     payload: WorkflowRunCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    definition = _get_definition_or_404(db, definition_id)
+    definition = _get_definition_or_404(db, definition_id, current_user)
 
     if definition.input_schema:
         try:
@@ -153,6 +156,7 @@ def run_definition(
         definition_id=definition.id,
         definition_version=definition.version,
         run_input=run_input,
+        created_by=current_user.id,
     )
     _attach_task_details(db, workflow.steps)
     return workflow
@@ -163,11 +167,12 @@ def list_definition_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    _get_definition_or_404(db, definition_id)
+    _get_definition_or_404(db, definition_id, current_user)
     runs = db.scalars(
         select(Workflow)
-        .where(Workflow.definition_id == definition_id)
+        .where(Workflow.definition_id == definition_id, Workflow.created_by == current_user.id)
         .order_by(Workflow.created_at.desc())
         .offset(offset)
         .limit(limit)

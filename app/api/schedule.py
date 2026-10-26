@@ -12,6 +12,7 @@ from app.models.workflow import WorkflowDefinition
 from app.schemas.definition import resolve_run_input
 from app.schemas.schedule import WorkflowScheduleCreate, WorkflowScheduleUpdate, WorkflowScheduleResponse
 from app.core.security import get_current_user
+from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import RateLimiter
 from app.core.cron import compute_next_run
 
@@ -22,9 +23,10 @@ router = APIRouter(
 )
 
 
-def _get_definition_or_400(db: Session, definition_id: UUID) -> WorkflowDefinition:
+def _get_definition_or_400(db: Session, definition_id: UUID, user: User) -> WorkflowDefinition:
     definition = db.get(WorkflowDefinition, definition_id)
-    if not definition:
+    # 別人的定義跟不存在一樣：不能拿別人的產線來排程
+    if not definition or definition.created_by != user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Workflow definition not found"
         )
@@ -44,6 +46,10 @@ def _resolve_input_or_422(definition: WorkflowDefinition, provided: dict) -> dic
         return resolve_run_input(definition.input_schema, provided)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+
+def _get_schedule_or_404(db: Session, schedule_id: UUID, user: User) -> WorkflowSchedule:
+    return get_owned_or_404(db, WorkflowSchedule, schedule_id, user, "Schedule not found")
 
 
 def _attach_definitions(db: Session, schedules: list[WorkflowSchedule]) -> None:
@@ -67,7 +73,7 @@ def create_schedule(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    definition = _get_definition_or_400(db, payload.definition_id)
+    definition = _get_definition_or_400(db, payload.definition_id, current_user)
     schedule = WorkflowSchedule(
         name=payload.name,
         cron_expression=payload.cron_expression,
@@ -85,17 +91,23 @@ def create_schedule(
 
 
 @router.get("/", response_model=List[WorkflowScheduleResponse])
-def list_schedules(db: Session = Depends(get_db)):
-    schedules = db.scalars(select(WorkflowSchedule).order_by(WorkflowSchedule.created_at.desc())).all()
+def list_schedules(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    schedules = db.scalars(
+        select(WorkflowSchedule)
+        .where(WorkflowSchedule.created_by == current_user.id)
+        .order_by(WorkflowSchedule.created_at.desc())
+    ).all()
     _attach_definitions(db, schedules)
     return schedules
 
 
 @router.get("/{schedule_id}", response_model=WorkflowScheduleResponse)
-def get_schedule(schedule_id: UUID, db: Session = Depends(get_db)):
-    schedule = db.get(WorkflowSchedule, schedule_id)
-    if not schedule:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+def get_schedule(
+    schedule_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    schedule = _get_schedule_or_404(db, schedule_id, current_user)
     _attach_definitions(db, [schedule])
     return schedule
 
@@ -105,10 +117,9 @@ def update_schedule(
     schedule_id: UUID,
     payload: WorkflowScheduleUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    schedule = db.get(WorkflowSchedule, schedule_id)
-    if not schedule:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+    schedule = _get_schedule_or_404(db, schedule_id, current_user)
 
     if payload.input is not None:
         if not schedule.definition_id:
@@ -116,7 +127,7 @@ def update_schedule(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This is a legacy schedule with its own step snapshot — recreate it against a workflow to give it input.",
             )
-        definition = _get_definition_or_400(db, schedule.definition_id)
+        definition = _get_definition_or_400(db, schedule.definition_id, current_user)
         schedule.input = _resolve_input_or_422(definition, payload.input)
 
     if payload.name is not None:
@@ -134,10 +145,12 @@ def update_schedule(
 
 
 @router.delete("/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_schedule(schedule_id: UUID, db: Session = Depends(get_db)):
-    schedule = db.get(WorkflowSchedule, schedule_id)
-    if not schedule:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found")
+def delete_schedule(
+    schedule_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    schedule = _get_schedule_or_404(db, schedule_id, current_user)
     db.delete(schedule)
     db.commit()
     return None

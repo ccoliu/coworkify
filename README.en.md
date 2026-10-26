@@ -32,6 +32,7 @@ English | [繁體中文](README.md)
 - **Redis sliding-window rate limiting**: Request rate is tracked per logged-in user, protecting the system from any single source overwhelming it.
 - **Real-time task status push**: WebSocket + Redis Pub/Sub push task status changes instantly, no frontend polling required.
 - **Account authentication**: Register/login with bcrypt-hashed passwords and JWT session tokens; users can self-register from the frontend.
+- **Per-user isolation**: definitions, runs, tasks and schedules belong to the user who created them — including what the system creates on their behalf (a run's tasks, for_each expansions, scheduled runs). Anyone else gets a 404 (not a 403, which would confirm the id exists), and `/ws/tasks` only pushes the caller's own tasks.
 - **Live Ops dashboard**: The React frontend visualizes queue depth, throughput, and error rate in real time; the run detail page renders the same canvas in read-only mode, colouring nodes by task status and updating live over WebSocket.
 
 ---
@@ -269,7 +270,7 @@ A schedule's `input` is validated against the `input_schema` when it is saved, a
 | `GET` | `/health` | API server health check |
 | `WS` | `/ws/tasks` | WebSocket for real-time task status updates (Redis Pub/Sub) |
 
-Every endpoint under `/tasks`, `/definitions`, `/workflows`, and `/schedules` requires a JWT obtained via `/auth/register` or `/auth/login`, sent in the `Authorization: Bearer <token>` header, and is rate-limited per logged-in identity via Redis sliding-window limiting.
+Every endpoint under `/tasks`, `/definitions`, `/workflows`, and `/schedules` requires a JWT obtained via `/auth/register` or `/auth/login`, sent in the `Authorization: Bearer <token>` header, and is rate-limited per logged-in identity via Redis sliding-window limiting. Each user only sees and changes their own resources. Since browsers can't set headers on a WebSocket, `/ws/tasks` takes the JWT in the query string: `/ws/tasks?token=<JWT>`.
 
 ---
 

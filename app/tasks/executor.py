@@ -579,6 +579,7 @@ def create_workflow_from_steps(db,
     definition_id=None,
     definition_version: int | None = None,
     run_input: dict | None = None,
+    created_by=None,
 ) -> Workflow:
     """建立 workflow + 派送根節點；供 API 與排程共用"""
     # 存一份原始樣板，讓這個 workflow 之後可以直接被「升級成排程」
@@ -590,6 +591,7 @@ def create_workflow_from_steps(db,
         definition_id=definition_id,
         definition_version=definition_version,
         input=run_input,
+        created_by=created_by,
     )
     db.add(workflow)
     db.flush()
@@ -609,6 +611,7 @@ def create_workflow_from_steps(db,
             priority=step["priority"],
             max_retries=step.get("max_retries", 3),
             status="pending",
+            created_by=created_by,
         )
         db.add(task)
         key_to_task[step["key"]] = task
@@ -852,6 +855,7 @@ def expand_dynamic_steps(db, workflow: Workflow, map_task: Task):
                 priority=template.priority,
                 max_retries=template.max_retries,
                 status="pending",
+                created_by=workflow.created_by,
             )
             db.add(task)
             db.flush()

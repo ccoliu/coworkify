@@ -1,14 +1,14 @@
-from requests import Session
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import session
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.db import get_db
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
+from app.models.user import User
 from app.models.workflow import WorkflowStep, WorkflowStepTemplate
 from app.schemas.task import TaskCreate, TaskResponse, TaskResultResponse, TaskTypeSpec, TaskLogResponse
 from app.tasks.catalog import TASK_TYPE_CATALOG
@@ -18,8 +18,21 @@ from app.core.rate_limit import RateLimiter
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"], dependencies=[Depends(get_current_user), Depends(RateLimiter(times=5000, seconds=1))])
 
+
+def _get_own_task_or_404(db: Session, task_id: UUID, user: User) -> Task:
+    """自己的、沒被刪掉的 task。別人的和不存在的一樣回 404。"""
+    task = db.get(Task, task_id)
+    if task is None or task.deleted_at is not None or task.created_by != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return task
+
+
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
+def create_task(
+    task_in: TaskCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     db_task = Task(
         name = task_in.name,
         task_type = task_in.task_type,
@@ -28,6 +41,7 @@ def create_task(task_in: TaskCreate, db: session = Depends(get_db)):
         max_retries = task_in.max_retries,
         scheduled_at = task_in.scheduled_at,
         status = "pending",
+        created_by = current_user.id,
     )
     db.add(db_task)
     db.commit()
@@ -54,9 +68,10 @@ def get_tasks(
     task_type: Optional[str] = Query(None, description="任務類型"),
     limit: int = Query(20, ge=1, le=100, description="每頁筆數"),
     offset: int = Query(0, ge=0, description="跳過筆數"),
-    db: session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    stmt = select(Task).where(Task.deleted_at.is_(None))
+    stmt = select(Task).where(Task.deleted_at.is_(None), Task.created_by == current_user.id)
     if status:
         stmt = stmt.where(Task.status == status)
     if task_type:
@@ -72,18 +87,20 @@ def get_task_types():
     return TASK_TYPE_CATALOG
 
 @router.get("/{task_id}", response_model=TaskResponse)
-def get_task_by_id(task_id: UUID, db: session = Depends(get_db)):
-    stmt = select(Task).where(Task.id == task_id, Task.deleted_at.is_(None))
-    task = db.scalars(stmt).first()
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return task
+def get_task_by_id(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _get_own_task_or_404(db, task_id, current_user)
 
 @router.get("/{task_id}/result", response_model=TaskResultResponse)
-def get_task_result(task_id: UUID, db: session = Depends(get_db)):
-    task = db.get(Task, task_id)
-    if task is None or task.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+def get_task_result(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = _get_own_task_or_404(db, task_id, current_user)
 
     log = db.scalars(
         select(TaskLog).where(TaskLog.task_id == task_id).order_by(TaskLog.created_at.desc())
@@ -101,15 +118,14 @@ def get_task_logs(
     task_id: UUID,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     這個 task 的完整執行歷程，由舊到新。每次重試都有一筆，所以 retry 之後
     仍看得到前幾輪失敗的原因——WebSocket 只推當下那一次，重新整理就沒了。
     """
-    task = db.get(Task, task_id)
-    if task is None or task.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    _get_own_task_or_404(db, task_id, current_user)
 
     return db.scalars(
         select(TaskLog)
@@ -120,11 +136,12 @@ def get_task_logs(
     ).all()
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_task(task_id: UUID, db: session = Depends(get_db)):
-    stmt = select(Task).where(Task.id == task_id, Task.deleted_at.is_(None))
-    task = db.scalars(stmt).first()
-    if task is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+def delete_task(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = _get_own_task_or_404(db, task_id, current_user)
 
     # WorkflowStep.task_id / WorkflowStepTemplate.for_each_task_id are FKs to
     # tasks.id. Soft delete keeps the row (and those FKs) intact, but a task
@@ -145,7 +162,3 @@ def delete_task(task_id: UUID, db: session = Depends(get_db)):
     task.deleted_at = datetime.utcnow()
     db.commit()
     return None
-    
-
-    
-    

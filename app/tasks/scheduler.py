@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 def _trigger(db, sched: WorkflowSchedule, now: datetime) -> None:
     if not sched.definition_id:
         # 舊排程：自己帶著一份 step 快照，沒有定義可以指
-        create_workflow_from_steps(db, f"{sched.name} @ {now.strftime('%Y-%m-%d %H:%M:%S')}", sched.steps or [])
+        create_workflow_from_steps(
+            db, f"{sched.name} @ {now.strftime('%Y-%m-%d %H:%M:%S')}", sched.steps or [],
+            created_by=sched.created_by,
+        )
         return
     
     definition = db.get(WorkflowDefinition, sched.definition_id)
@@ -36,6 +39,7 @@ def _trigger(db, sched: WorkflowSchedule, now: datetime) -> None:
         definition_id=definition.id,
         definition_version=definition.version,
         run_input=run_input,
+        created_by=sched.created_by,
     )
 
 @celery_app.task(name="coworkify.check_due_schedules")

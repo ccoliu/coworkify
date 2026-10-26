@@ -149,3 +149,11 @@ def auth(client):
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
+
+
+@pytest.fixture
+def other_auth(client):
+    """第二個使用者，用來測「看不到、改不了別人的東西」。"""
+    res = client.post("/auth/register", json={"username": "mallory", "password": "correct-horse"})
+    assert res.status_code == 201, res.text
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}

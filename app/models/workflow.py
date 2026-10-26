@@ -68,6 +68,11 @@ class Workflow(Base):
     definition_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # 這次 run 經 input_schema 檢查、補完預設值後的輸入；rerun 會沿用它
     input: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    # 擁有者：只有觸發這次 run 的使用者（排程觸發的是排程的擁有者）看得到、改得了。API 對別人的資源一律回 404。
+    # 舊資料由 2026_10_26_owners.sql 回填。
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
 
 class WorkflowStep(Base):
     __tablename__ = "workflow_steps"

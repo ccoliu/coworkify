@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { getAuthToken } from '../lib/authStorage'
 import type { WsTaskUpdate } from '../lib/types'
 
 export type WsStatus = 'connecting' | 'open' | 'closed'
@@ -32,9 +33,12 @@ const WsContext = createContext<WsContextValue>({
 
 function buildWsUrl(): string {
   const configured = import.meta.env.VITE_WS_URL
-  if (configured) return configured
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws/tasks`
+  const base = configured || `${protocol}//${window.location.host}/ws/tasks`
+  // 瀏覽器的 WebSocket 不能帶 Authorization header，JWT 只能放 query string；
+  // 伺服器只會推這個使用者自己的 task。每次重連都重新讀，登入後下一次重連就帶得到。
+  const token = getAuthToken()
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }
 
 export function WsProvider({ children }: { children: ReactNode }) {
