@@ -33,6 +33,7 @@
 - **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
 - **資源隔離**：定義、run、task、排程都屬於建立它的使用者——系統代替使用者建立的也一樣（run 裡的 task、for_each 展開的 task、排程觸發的 run）。別人的資源一律回 404（不回 403，免得透露那個 id 存在）；`/ws/tasks` 也只推送自己的 task。
+- **密鑰管理（Connections）**：GitHub token、Discord webhook 這類密鑰以 Fernet 加密存放，寫進去之後 API 不會再回傳。步驟用 `{{connections.<name>}}` 引用，worker 執行當下才解密代換——資料庫裡的 payload 只有佔位字串，結果與錯誤訊息存進 log 前會把密鑰換回 `<connection:name>`。只能用在發網路請求的欄位，`python` / `shell` 拿不到。
 - **即時 Ops 儀表板**：React 前端提供任務佇列深度、吞吐量、錯誤率的即時可視化；workflow 詳情頁用同一套畫布以唯讀模式呈現執行進度，節點依狀態上色、WebSocket 即時更新。
 
 ---
@@ -123,6 +124,8 @@ Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況�
 
 ### 1. 設定環境變數
 複製一份 `.env`（範例參考 `docker-compose.yml` 所需的變數：`POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB`、`JWT_SECRET` 等），改成自己的值。`JWT_SECRET` 用來簽發登入 token，建議用 `python -c "import secrets; print(secrets.token_hex(32))"` 產生一組隨機字串。
+
+`.env` 另外需要 `CONNECTIONS_KEY`（加密 connection 的金鑰），用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生。可以用逗號放多把：加密用第一把、解密每一把都試，換金鑰時把新的放前面、舊的留著，直到每個 connection 都重新存過。
 
 ### 2. 一鍵啟動全部服務
 ```bash
@@ -251,6 +254,16 @@ POST /definitions/{definition_id}/runs
 - 任一節點徹底失敗（重試耗盡）時，所有下游節點會被自動標記為 `cancelled`，整個 workflow 標記為 `failed`。修掉問題之後可以用 `/retry` 只重跑失敗那一段——沒走到的分支會維持 `cancelled`，不會被誤喚醒
 
 **輸出**：workflow 全部完成時，所有終端節點（沒有其他步驟依賴它）的成功結果會收進 `workflows.result`，格式是 `{step_key: result}`，可在 `GET /workflows/{id}` 的回應與詳情頁的 Result 卡片看到。
+
+### Connections（密鑰）
+| Method | Endpoint | 說明 |
+| :--- | :--- | :--- |
+| `POST` | `/connections/` | 建立一組密鑰（`name` + `value`），值加密存放；回應不含值 |
+| `GET` | `/connections/` | 列出自己的 connection（名稱、說明、更新時間，沒有值） |
+| `PATCH` | `/connections/{connection_id}` | 換一個新的值或改說明；名稱不能改，步驟靠它引用 |
+| `DELETE` | `/connections/{connection_id}` | 刪除；引用它的步驟之後執行會失敗並說明原因 |
+
+可以引用的位置：`http_request` 的 `url` 與 `headers`、`fetch_page` 的 `url`、`notify` 的 `webhook_url`，例如 `{"Authorization": "Bearer {{connections.github}}"}`。放在其他欄位（包括 `python` / `shell` 的程式碼）的引用，在建立定義時就會被擋下（422）。
 
 ### Schedules（週期性排程）
 | Method | Endpoint | 說明 |

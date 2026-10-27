@@ -10,6 +10,7 @@ from app.api.schedule import router as schedule_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.definitions import router as definitions_router
 from app.core.log_redaction import install_token_redaction
+from app.api.connections import router as connections_router
 
 # /ws/tasks?token=<JWT>：uvicorn 會把完整網址寫進 log，先遮掉 token 再說
 install_token_redaction()
@@ -42,6 +43,8 @@ app.include_router(workflows_router)
 app.include_router(auth_router)
 app.include_router(schedule_router)
 app.include_router(definitions_router)
+app.include_router(connections_router)
+
 
 @app.get("/health")
 def health_check():

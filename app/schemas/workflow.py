@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 import json 
 import re
 
+from app.tasks.connections import CONNECTION_FIELDS, misplaced_connection_refs
+
 _STEP_REF = re.compile(r"\{\{\s*steps\.([a-zA-Z0-9_]+)\.result(?:\.[a-zA-Z0-9_]+)*\s*\}\}")
 _STEP_REF_SYNTAX = "{{steps.<key>.result}}"
 
@@ -51,6 +53,14 @@ class StepsGraph(BaseModel):
         keys = [s.key for s in self.steps]
         if len(keys) != len(set(keys)):
             raise ValueError("Step key 不可重複")
+        for s in self.steps:
+            misplaced = misplaced_connection_refs(s.task_type, s.payload)
+            if misplaced:
+                raise ValueError(
+                    f"Step '{s.key}': {{{{connections.*}}}} 只能用在 "
+                    + "、".join(f"{t}.{f}" for t, fs in CONNECTION_FIELDS.items() for f in fs)
+                    + f"——不能放在 {s.task_type} 的 {', '.join(misplaced)}"
+                )
         key_set = set(keys)
         by_key = {s.key: s for s in self.steps}
         deps = {s.key: s.depends_on for s in self.steps}

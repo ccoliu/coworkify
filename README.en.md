@@ -33,6 +33,7 @@ English | [繁體中文](README.md)
 - **Real-time task status push**: WebSocket + Redis Pub/Sub push task status changes instantly, no frontend polling required.
 - **Account authentication**: Register/login with bcrypt-hashed passwords and JWT session tokens; users can self-register from the frontend.
 - **Per-user isolation**: definitions, runs, tasks and schedules belong to the user who created them — including what the system creates on their behalf (a run's tasks, for_each expansions, scheduled runs). Anyone else gets a 404 (not a 403, which would confirm the id exists), and `/ws/tasks` only pushes the caller's own tasks.
+- **Secrets (Connections)**: tokens and webhook URLs are stored encrypted with Fernet and never come back out of the API. Steps reference them as `{{connections.<name>}}`, decrypted in the worker only at execution time — the stored payload keeps the placeholder, and results and error messages are scrubbed back to `<connection:name>` before they're logged. Only fields that make network requests can use them; `python` / `shell` never see them.
 - **Live Ops dashboard**: The React frontend visualizes queue depth, throughput, and error rate in real time; the run detail page renders the same canvas in read-only mode, colouring nodes by task status and updating live over WebSocket.
 
 ---
@@ -122,6 +123,8 @@ The model is `qwen/qwen3.5-9b` running locally in LM Studio behind an OpenAI-com
 
 ### 1. Configure environment variables
 Copy a `.env` file (see `docker-compose.yml` for the required variables: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `JWT_SECRET`, etc.) and fill in your own values. `JWT_SECRET` is used to sign login tokens — generate a random string with `python -c "import secrets; print(secrets.token_hex(32))"`.
+
+`.env` also needs `CONNECTIONS_KEY`, the key that encrypts connections — generate it with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. It may hold several comma-separated keys: the first encrypts, all of them are tried to decrypt, so rotate by putting the new key first and keeping the old one until every connection has been saved again.
 
 ### 2. Start all services with one command
 ```bash
@@ -250,6 +253,16 @@ POST /definitions/{definition_id}/runs
 - When a node fails permanently (retries exhausted), all downstream nodes are automatically marked `cancelled` and the whole workflow is marked `failed`. After fixing the problem, `/retry` re-runs only the failed part — branches that weren't taken stay `cancelled` and are never woken up by mistake
 
 **Output**: once a workflow completes, the successful results of every terminal node (nodes nothing else depends on) are collected into `workflows.result` as `{step_key: result}`, visible in the `GET /workflows/{id}` response and in the Result card on the detail page.
+
+### Connections (secrets)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/connections/` | Store a secret (`name` + `value`), encrypted; the response never includes the value |
+| `GET` | `/connections/` | List your connections (name, description, last update — no values) |
+| `PATCH` | `/connections/{connection_id}` | Replace the value or the description; the name is fixed because steps refer to it |
+| `DELETE` | `/connections/{connection_id}` | Delete; steps that reference it fail with an explanation until it's recreated |
+
+References are allowed in `http_request`'s `url` and `headers`, `fetch_page`'s `url`, and `notify`'s `webhook_url` — e.g. `{"Authorization": "Bearer {{connections.github}}"}`. A reference anywhere else, including `python` / `shell` code, is rejected when the definition is saved (422).
 
 ### Schedules (recurring runs)
 | Method | Endpoint | Description |

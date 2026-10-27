@@ -224,3 +224,23 @@ export interface WorkflowDefinitionCreate {
   // 透過 schema 描述哪些 field 給前端當參數輸入用（順序就是輸入頁面從上到下的欄位順序）
   input_schema: TaskFieldSpec[]
 }
+
+// 值寫進去之後 API 就不會再回傳，這裡刻意沒有 value
+export interface Connection {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ConnectionCreate {
+  name: string
+  value: string
+  description?: string | null
+}
+
+export interface ConnectionUpdate {
+  value?: string
+  description?: string | null
+}

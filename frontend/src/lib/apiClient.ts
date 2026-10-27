@@ -1,6 +1,9 @@
 import { getAuthToken } from './authStorage'
 import type {
   AuthResponse,
+  Connection,
+  ConnectionCreate,
+  ConnectionUpdate,
   PromoteWorkflowToSchedule,
   Task,
   TaskCreate,
@@ -214,3 +217,18 @@ export function listDefinitionRuns(id: string, limit = 20, offset = 0): Promise<
   return request(`/definitions/${id}/runs?${params.toString()}`)
 }
 
+export function listConnections(): Promise<Connection[]> {
+  return request('/connections/')
+}
+
+export function createConnection(connection: ConnectionCreate): Promise<Connection> {
+  return request('/connections/', { method: 'POST', body: JSON.stringify(connection) })
+}
+
+export function updateConnection(id: string, patch: ConnectionUpdate): Promise<Connection> {
+  return request(`/connections/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+}
+
+export function deleteConnection(id: string): Promise<void> {
+  return request(`/connections/${id}`, { method: 'DELETE' })
+}

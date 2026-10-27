@@ -11,6 +11,7 @@ from app.db import SessionLocal
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
 from app.tasks.handler import get_task_handler, TASK_REGISTRY
+from app.tasks.connections import resolve_connections, scrub
 import os
 import redis
 import json
@@ -36,6 +37,7 @@ def execute_task(self, task_id: str):
     start_time = time.time()
     task_uuid = uuid.UUID(task_id)
     claimed = False
+    secrets: dict[str, str] = {}
 
     try:
         task = db.get(Task, task_uuid)
@@ -59,8 +61,9 @@ def execute_task(self, task_id: str):
         if not handler:
             raise ValueError(f"Unknown task type: {task.task_type}. Available types: {list(TASK_REGISTRY.keys())}")
         
-        # 3. 記錄任務開始
-        result = handler(task.payload)
+        # 3. 代換 {{connections.x}}：明文只存在這一份 payload 裡，不寫回資料庫
+        payload, secrets = resolve_connections(db, task)
+        result = scrub(handler(payload), secrets)
         execute_time_ms = (time.time() - start_time) * 1000
 
         # 4. 執行成功
@@ -75,8 +78,13 @@ def execute_task(self, task_id: str):
         execute_time_ms = (time.time() - start_time) * 1000
         task = db.get(Task, task_uuid)
 
+        # 錯誤訊息常常含著網址（webhook 網址本身就是密鑰）：存進 task_logs、交給 Celery 之前先遮掉
+        error_message = scrub(str(exc), secrets)
+        if secrets:
+            exc = RuntimeError(error_message)
+
         if task:
-            countdown = record_task_failure(db, task, str(exc), execute_time_ms)
+            countdown = record_task_failure(db, task, error_message, execute_time_ms)
             db.close()
             if countdown is not None:
                 raise self.retry(countdown=countdown, exc=exc)
