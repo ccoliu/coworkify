@@ -195,3 +195,15 @@ def test_a_single_task_cannot_smuggle_a_secret_into_code(client, auth, db, run_a
 
     with pytest.raises(ValueError, match="not in python steps"):
         execute_task(task_id)
+
+
+def test_a_reference_inside_headers_typed_in_the_builder_is_resolved(client, auth, run_as_worker):
+    # 畫布上的 Headers 欄位存的是一段 JSON 字串，引用就在字串裡面
+    create(client, auth)
+    task_id = make_task(client, auth, {"url": "https://api.github.com/user",
+                                       "headers": '{"Authorization": "Bearer {{connections.github}}"}'})
+    seen = run_as_worker(lambda p: {"status_code": 200, "response_body": {}})
+
+    execute_task(task_id)
+
+    assert seen[0]["headers"] == '{"Authorization": "Bearer ' + TOKEN + '"}'

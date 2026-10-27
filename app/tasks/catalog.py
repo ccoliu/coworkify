@@ -147,6 +147,25 @@ TASK_TYPE_CATALOG = [
         "fields": [
             {"key": "url", "label": "URL", "kind": "string", "default": "https://httpbin.org/get", "required": True},
             {"key": "method", "label": "Method", "kind": "select", "default": "GET", "required": False, "options": _HTTP_METHOD_OPTIONS},
+            {
+                "key": "headers",
+                "label": "Headers (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "{}",
+                "required": False,
+                "help": "例如 {\"Authorization\": \"Bearer {{connections.github}}\"}。"
+                        "token 這類密鑰請放在 Connections 頁，用 {{connections.<name>}} 引用，不要直接寫在這裡。",
+            },
+            {
+                "key": "body",
+                "label": "Body (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "",
+                "required": False,
+                "help": "POST / PUT / PATCH 時送出的 JSON；GET 請留空。",
+            },
             {"key": "timeout_seconds", "label": "Timeout (seconds)", "kind": "number", "default": 10, "required": False},
         ],
     },

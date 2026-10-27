@@ -67,8 +67,9 @@ def handle_http_request(payload: Dict[str, Any]) -> Dict[str, Any]:
     _validate_public_url(url)
 
     method = payload.get("method", "GET").upper()
-    body = payload.get("body")
-    headers = payload.get("headers", {})
+    # 畫布上的 JSON 欄位送來的是字串；直接打 API 的可能是 dict——兩種都收
+    headers = _parse_json_payload_field(payload.get("headers"), "headers")
+    body = _parse_json_body(payload.get("body"))
     timeout = payload.get("timeout_seconds", 10)
 
     response = requests.request(
@@ -81,6 +82,17 @@ def handle_http_request(payload: Dict[str, Any]) -> Dict[str, Any]:
         response_body = response.text[:2000]
 
     return {"status_code": response.status_code, "response_body": response_body}
+
+def _parse_json_body(raw):
+    """body 可以是任何 JSON（物件、陣列、字串……）；空字串或沒填代表不送 body。"""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"payload.body 不是合法的 JSON: {exc}") from exc
 
 _FETCH_MAX_BYTES = 2 * 1024 * 1024
 _FETCH_MAX_REDIRECTS = 3

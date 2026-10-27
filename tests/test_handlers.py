@@ -111,6 +111,29 @@ def test_http_request_does_not_follow_redirects(monkeypatch):
     assert kwargs["allow_redirects"] is False
     assert kwargs["json"] == {"a": 1}
 
+def test_http_request_accepts_headers_and_body_as_json_text(monkeypatch):
+    # 畫布上的 JSON 編輯框送來的是字串，不是 dict
+    calls = []
+    monkeypatch.setattr(handler.requests, "request",
+                        lambda method, url, **kw: calls.append(kw) or FakeResponse(200, json_body={}))
+
+    handle_http_request({
+        "url": "https://93.184.216.34/api", "method": "POST",
+        "headers": '{"Authorization": "Bearer abc"}', "body": '{"a": [1, 2]}',
+    })
+    handle_http_request({"url": "https://93.184.216.34/api", "headers": "", "body": "  "})
+
+    assert calls[0]["headers"] == {"Authorization": "Bearer abc"}
+    assert calls[0]["json"] == {"a": [1, 2]}
+    assert calls[1]["headers"] == {} and calls[1]["json"] is None
+
+
+def test_http_request_rejects_headers_that_are_not_a_json_object(monkeypatch):
+    monkeypatch.setattr(handler.requests, "request", lambda *a, **kw: pytest.fail("must not send"))
+    with pytest.raises(ValueError, match="headers"):
+        handle_http_request({"url": "https://93.184.216.34/", "headers": '["not", "an", "object"]'})
+
+
 def test_http_request_falls_back_to_truncated_text(monkeypatch):
     monkeypatch.setattr(handler.requests, "request", lambda *a, **kw: FakeResponse(200, text="x" * 5000))
     result = handle_http_request({"url": "https://93.184.216.34/"})
