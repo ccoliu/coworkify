@@ -9,7 +9,7 @@ English | [繁體中文](README.md)
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** is a lightweight, high-performance, and flexible distributed task scheduling and management platform (architecturally inspired by Apache Airflow and Celery). Users and microservices can define, schedule, track, and monitor asynchronous tasks through a RESTful API, with support for chaining multiple tasks into a DAG workflow, using Redis + Postgres + Celery, load-tested with Locust at 150 concurrent users over a 2-minute window, sustaining 194.5 RPS.
+**Coworkify** is a lightweight, high-performance, and flexible distributed task scheduling and management platform (architecturally inspired by Apache Airflow and Celery). Users and microservices can define, schedule, track, and monitor asynchronous tasks through a RESTful API, with support for chaining multiple tasks into a DAG workflow, using Redis + Postgres + Celery, load-tested with Locust at about 240 RPS from a single API process (p95 220 ms at 100 concurrent users, zero errors at 150 — see [Benchmark Results](#benchmark-results)).
 
 ![alt text](<coworkify.png>)
 ---
@@ -276,33 +276,34 @@ Every endpoint under `/tasks`, `/definitions`, `/workflows`, and `/schedules` re
 
 ## Benchmark Results
 
-Load-tested with **Locust** at 150 concurrent users over a 2-minute window, simulating concurrent read/write traffic (database queries, task creation, and Redis queue dispatch), with the database cleared beforehand:
-- **Total requests**: 23,310
-- **Failure rate**: **0.06% (14 failures, all Windows-loopback-level `ConnectionResetError`, not application-layer errors)**
-- **Throughput**: **194.5 RPS**
-- **Average latency**: **443 ms**
-- **P95 latency**: **820 ms**
-- **Median latency**: **410 ms**
+Measured 2026-10-27. Every round starts from an **empty database** under the same conditions:
 
-| API Endpoint | Request Type | Avg Latency (ms) | Throughput (RPS) | Failure Rate |
+- **Environment**: Docker Desktop (Windows, VM with 8 CPUs / 6 GB), Locust on the host; the API is a single uvicorn process (as in production, minus `--reload`), Celery worker `concurrency=4`, Postgres 15, Redis 7
+- **Load**: each virtual user registers for a JWT, then loops over `GET /tasks` (weight 3), `POST /tasks` (2), `POST /workflows` creating a 3-step workflow (1) and `GET /health` (1), waiting 0.1–0.5 s between requests; 20 users added per second, 2 minutes per round
+
+| Concurrent users | Throughput | Avg latency | p50 | p95 | p99 | Failures |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 50 | 147.5 RPS | 34 ms | 17 ms | 76 ms | 120 ms | 0 |
+| 100 | **242.5 RPS** | 104 ms | 96 ms | 220 ms | 300 ms | 0 |
+| 150 | 240.0 RPS | 307 ms | 320 ms | 500 ms | 640 ms | 0 |
+
+Per endpoint at 100 users:
+
+| API Endpoint | What it does | Throughput | Avg latency | p95 |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET /health` | Health check | 115 ms | 32.7 RPS | 0.05% |
-| `GET /tasks` | Paginated DB query | 502 ms | 97.2 RPS | 0.08% |
-| `POST /tasks` | Task creation + queue dispatch | 520 ms | 64.5 RPS | 0.04% |
+| `GET /tasks` | Paginated query filtered by owner | 103.3 RPS | 103 ms | 200 ms |
+| `POST /tasks` | Insert a task + enqueue it | 68.3 RPS | 125 ms | 230 ms |
+| `POST /workflows` | Create a 3-step workflow + dispatch its root | 35.0 RPS | 139 ms | 250 ms |
+| `GET /health` | No database | 35.1 RPS | 20 ms | 42 ms |
 
-> These numbers are not directly comparable with an earlier version's 288 RPS / 38.9 ms: the two runs used different concurrency (a little over 100 users then, 150 now), the code changed considerably in between, and the earlier run predates the fix for the rate limiter's event-loop-blocking bug. The first attempt at this re-run had 83% `403` responses because the container hadn't re-read `.env` and was still using an old API key; those numbers were discarded, and the table above comes from the corrected run in which every request passed authentication. The current bottleneck is believed to be that `/tasks` uses synchronous (`def`, not `async def`) SQLAlchemy calls, which FastAPI runs in a thread pool — this tends to queue up under high concurrency. Switching the DB layer to async (`asyncpg` + SQLAlchemy async session) is the next lever to pull for more throughput.
->
-> These numbers were measured **before** switching authentication from API keys to JWT-based login (the identity-check mechanism changed, but both are O(1) lookups/decodes and shouldn't be the main bottleneck); this table will be updated after a re-measurement.
+**Reading the numbers**
 
-### Workflow Creation Throughput
+- **A single API process tops out around 240 RPS.** Going from 100 to 150 users adds no throughput and triples latency — the extra requests just queue. During the test the API container sat at 120% CPU while Postgres was at 30–40%, so the limit is the API process itself (synchronous SQLAlchemy calls running in a thread pool, bound by the GIL), not the database. The next lever is more uvicorn worker processes or an async database layer.
+- **What the API accepts ≠ what the workers finish.** In two minutes the API accepted about 8,000 tasks and 4,000 workflows, while the `concurrency=4` worker finished about 1,000 in the same window — a third of the traffic is `heavy_computation`, which really sleeps for a second. The table measures the API's intake; the queue backlog drains after the test ends.
 
-The same 150-concurrency test round also included `POST /workflows` (creating a 3-node linear pipeline each time):
+**A bug this benchmark caught: the database connection budget.** The first round returned 24 errors at 150 users, with Postgres logging `FATAL: sorry, too many clients already`: every process (the API, each worker child, beat) allowed up to 100 connections, far beyond Postgres's default of 100 in total. Shrinking every pool to 10 + 10 made it worse — the API deadlocked. A request runs `get_current_user` in a thread first, takes a connection and keeps it, then queues for another thread to run the endpoint; with fewer connections than the 40-thread pool, the two sides wait on each other until `pool_timeout` turns them into 500s, and throughput at 150 users fell to 5 RPS. The final budget gives the API 50 connections (no smaller than its thread pool) and each worker and beat process 5, 85 in total, under 100. The table above uses that configuration; the test never used more than 60 connections.
 
-| API Endpoint | Request Type | Avg Latency (ms) | Throughput (RPS) | Failure Rate |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST /workflows` | Create a 3-node workflow + dispatch root node | 578 ms | 24.6 RPS | 0.20% |
-
-2,941 workflows were created during the test, and all were later confirmed to have **run to completion in order, with none stuck or errored** (the `advance_workflow` chained-dispatch logic holds up under high concurrency). One caveat: workflow tasks share the same `concurrency=4` Celery worker pool with the regular `POST /tasks` test traffic, so when many `heavy_computation` tasks (which really do `sleep(1)` second) pile up, workflow chain completion times get pushed back — this is queuing delay from shared resources, not a logic bug. If you want to measure workflow latency in isolation, run it separately from other task-type load, or give workflows their own dedicated Celery queue.
+> The 194.5 RPS in earlier versions of this README (2026-08-30) was measured before JWT auth, per-user isolation and task claiming, under different conditions, and is superseded by the table above.
 
 ---
 

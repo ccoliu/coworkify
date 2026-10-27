@@ -9,7 +9,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，以 Locust 模擬 150 個併發使用者、壓測 2 分鐘，吞吐量 194.5 RPS。
+**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，以 Locust 壓測，單一 API process 在 100 個併發使用者時達到約 240 RPS、p95 220 ms，150 人時零錯誤（見[壓力測試報告](#壓力測試報告-benchmark-results)）。
 
 ![alt text](<coworkify.png>)
 ---
@@ -277,33 +277,34 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 
 ## 壓力測試報告 (Benchmark Results)
 
-使用 **Locust** 在 150 併發使用者、2 分鐘測試窗口下進行負載測試，模擬多用戶並發讀寫請求（包含資料庫查詢、任務建立與 Redis 佇列派發），資料庫在測試前已清空：
-- **總測試請求數**：23,310 Requests
-- **失敗率**：**0.06% (14 Failures，皆為 Windows loopback 網路層 `ConnectionResetError`，非應用層錯誤)**
-- **系統吞吐量 (Throughput)**：**194.5 RPS**
-- **平均延遲 (Average Latency)**：**443 ms**
-- **P95 延遲**：**820 ms**
-- **中位數延遲 (Median)**：**410 ms**
+2026-10-27 量測，每一輪都在**全新的空資料庫**上跑，條件相同：
 
-| API 端點 | 請求類型 | 平均延遲 (ms) | 吞吐量 (RPS) | 失敗率 |
+- **環境**：Docker Desktop（Windows，VM 分到 8 CPU / 6 GB），Locust 在主機上跑；API 是單一 uvicorn process（同正式設定，只是沒開 `--reload`），Celery worker `concurrency=4`，Postgres 15、Redis 7
+- **負載**：每個虛擬使用者先註冊取得 JWT，接著循環：`GET /tasks`（權重 3）、`POST /tasks`（2）、`POST /workflows` 建立 3 節點 workflow（1）、`GET /health`（1），每次間隔 0.1–0.5 秒；每秒增加 20 個使用者，跑 2 分鐘
+
+| 併發使用者 | 吞吐量 | 平均延遲 | p50 | p95 | p99 | 失敗 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 50 | 147.5 RPS | 34 ms | 17 ms | 76 ms | 120 ms | 0 |
+| 100 | **242.5 RPS** | 104 ms | 96 ms | 220 ms | 300 ms | 0 |
+| 150 | 240.0 RPS | 307 ms | 320 ms | 500 ms | 640 ms | 0 |
+
+100 人時各端點的數字：
+
+| API 端點 | 內容 | 吞吐量 | 平均延遲 | p95 |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET /health` | 健康檢查 | 115 ms | 32.7 RPS | 0.05% |
-| `GET /tasks` | 資料庫分頁查詢 | 502 ms | 97.2 RPS | 0.08% |
-| `POST /tasks` | 任務建立 + 佇列派發 | 520 ms | 64.5 RPS | 0.04% |
+| `GET /tasks` | 依擁有者過濾的分頁查詢 | 103.3 RPS | 103 ms | 200 ms |
+| `POST /tasks` | 寫入 task + 派送進佇列 | 68.3 RPS | 125 ms | 230 ms |
+| `POST /workflows` | 建立 3 節點 workflow + 派送根節點 | 35.0 RPS | 139 ms | 250 ms |
+| `GET /health` | 不碰資料庫 | 35.1 RPS | 20 ms | 42 ms |
 
-> 這組數字不能直接跟早期版本的 288 RPS / 38.9 ms 比較：兩次的併發人數不同（當時一百多人，這次 150 人），程式也改過不少，早期那次還是在修正限流器的 event-loop 阻塞 bug 之前測的。重測時第一輪有 83% 的請求是 `403`，原因是容器沒有重新讀取 `.env`，還在用舊的 API key；那一輪的數字已經捨棄，上表是修正後所有請求都通過驗證的結果。目前的瓶頸研判在於 `/tasks` 端點是同步 (`def`，非 `async def`) SQLAlchemy 呼叫，FastAPI 會丟進 thread pool 執行，高併發下容易排隊；之後若要繼續壓榨吞吐量，可以考慮把 DB 層換成 async（`asyncpg` + SQLAlchemy async session）。
->
-> 這組數字是在認證機制從 API Key 換成 JWT 帳號登入**之前**測的（驗證身份的檢查方式改變了，但都是 O(1) 的查詢/解碼，預期不會是主要瓶頸），之後重新量測時一併更新這個表格。
+**解讀**
 
-### Workflow 建立吞吐量
+- **單一 API process 大約 240 RPS 就到頂。** 從 100 人加到 150 人，吞吐量沒有增加、延遲變成 3 倍——多出來的請求都在排隊。壓測當下 API 容器的 CPU 是 120%，Postgres 只有 30–40%，瓶頸在 API process 本身（同步的 SQLAlchemy 呼叫跑在 thread pool 裡，受 GIL 限制），不在資料庫。要再往上，下一步是多開 uvicorn worker process 或改用 async 的資料庫層。
+- **API 收得下的量 ≠ worker 做得完的量。** 2 分鐘內 API 收下約 8,000 個 task 和 4,000 個 workflow，`concurrency=4` 的 worker 同期間只做完約 1,000 個——測試流量裡三分之一是會 `sleep(1)` 的 `heavy_computation`。上表量的是 API 的收件能力；佇列裡的積壓是在壓測結束後才慢慢消化掉的。
 
-同一輪 150 併發測試裡加入 `POST /workflows`（每次建立 3 節點線性 pipeline）：
+**這次壓測抓到的 bug：資料庫連線預算。** 第一輪在 150 人時出現 24 個 500，Postgres 的 log 是 `FATAL: sorry, too many clients already`：每個 process（API、每個 worker 子 process、beat）的連線池上限都是 100，加起來遠超過 Postgres 預設的 100 條。把所有 process 都改小（10 + 10）反而讓 API 死結——一個請求會先在 thread 裡跑 `get_current_user` 拿走一條連線，再排隊等 thread 跑 endpoint；連線池比 thread pool（40 條）小時，兩邊互等到 `pool_timeout` 才變成 500，150 人時吞吐量掉到 5 RPS。最後的設定是 API 50 條（不小於 thread pool）、worker 與 beat 每個 process 5 條，全部加起來 85 條，小於 100；上表就是這個設定下的結果，壓測期間最多用到 60 條連線。
 
-| API 端點 | 請求類型 | 平均延遲 (ms) | 吞吐量 (RPS) | 失敗率 |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST /workflows` | 建立 3 節點 workflow + 派送根節點 | 578 ms | 24.6 RPS | 0.20% |
-
-測試期間總共建立了 2,941 個 workflow，事後全數確認**完整跑完、依序執行、無一卡死或錯誤**（`advance_workflow` 的鏈式派送邏輯在高併發下是穩的）。但要注意：workflow 任務跟一般 `POST /tasks` 測試流量共用同一個 `concurrency=4` 的 Celery worker pool，尤其 `heavy_computation` 這種會真的 `sleep(1)` 秒的任務一多，workflow 鏈的完成時間會被排擠拉長——這是資源共用造成的排隊延遲，不是邏輯問題。之後如果要單獨測 workflow 的延遲，建議跟其他任務類型的負載分開跑，或幫 workflow 開一條獨立的 Celery queue。
+> 舊版 README 的 194.5 RPS（2026-08-30）是在認證改成 JWT、加上資源隔離與 task 認領機制之前，在另一套條件下量的，已由上表取代。
 
 ---
 

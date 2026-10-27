@@ -61,6 +61,9 @@ services:
     volumes:
       - .:/app
     environment:
+      # 一次只跑一個 task，連線池開小一點；全部 process 加起來要低於 Postgres 的 100 條
+      - DB_POOL_SIZE=2
+      - DB_MAX_OVERFLOW=3
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET=${JWT_SECRET}
@@ -96,6 +99,9 @@ services:
     env_file:
       - .env
     environment:
+      # 一次只跑一個 task，連線池開小一點；全部 process 加起來要低於 Postgres 的 100 條
+      - DB_POOL_SIZE=2
+      - DB_MAX_OVERFLOW=3
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET=${JWT_SECRET}
@@ -126,6 +132,9 @@ services:
     volumes:
       - .:/app
     environment:
+      # 一次只跑一個 task，連線池開小一點；全部 process 加起來要低於 Postgres 的 100 條
+      - DB_POOL_SIZE=2
+      - DB_MAX_OVERFLOW=3
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET=${JWT_SECRET}
