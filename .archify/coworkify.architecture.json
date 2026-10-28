@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/ccoliu/coworkify.git",
-      "revision": "992e494b1b11a2cfbfcb8628d013fc08419459d9"
+      "revision": "5fafe9dfe6847074e4b36f6864fd460e56c93632"
     },
     "views": [
       {
@@ -20,7 +20,7 @@
           "redis",
           "worker"
         ],
-        "note": "使用者在畫布上建立 workflow 定義並執行；API 把 run 與 task 寫進 PostgreSQL，派送根節點到 Redis，Worker 執行後由 executor 組好下游的 inputs 再派送。"
+        "note": "API 把 run 與 task 寫進 PostgreSQL、派送根節點到 Redis；Worker 執行後組好下游的 inputs 再派送，狀態經 Pub/Sub 與 WebSocket 即時推給畫布。"
       },
       {
         "id": "agent-path",
@@ -34,26 +34,27 @@
         "note": "agent_step 走專屬的 agent_step 佇列，只有裝了 Codoctopus 的 worker-agent 會消費；模型透過 OpenAI 相容 API 呼叫本機 LM Studio，以 structured output 回傳固定欄位。"
       },
       {
-        "id": "realtime-push",
-        "label": "即時狀態推播",
+        "id": "secrets",
+        "label": "密鑰（Connections）",
         "focus": [
-          "worker",
-          "redis",
+          "frontend",
           "api",
-          "frontend"
+          "connections",
+          "worker",
+          "external"
         ],
-        "note": "Worker 透過 Redis Pub/Sub 發布狀態變更，API 訂閱後以 WebSocket 推給前端，畫布節點即時上色，無需輪詢。"
+        "note": "密鑰以 Fernet 加密存放、寫入後不再回傳。步驟用 {{connections.<name>}} 引用，worker 執行時才解密代換，結果與錯誤存進 log 前會遮掉；python / shell 拿不到。"
       },
       {
         "id": "auth-and-limit",
-        "label": "身份驗證與限流",
+        "label": "身份驗證與資源隔離",
         "focus": [
           "frontend",
           "api",
           "auth",
           "redis"
         ],
-        "note": "所有 /tasks、/definitions、/workflows、/schedules 端點都需要 JWT，並依登入身份套用 Redis 滑動窗口限流。"
+        "note": "所有端點都需要 JWT，依登入身份套用 Redis 滑動窗口限流；定義、run、task、排程、密鑰都只屬於建立者，別人的一律 404。/ws/tasks 用 ?token= 驗證，只推送自己的 task。"
       },
       {
         "id": "cron-scheduling",
@@ -97,8 +98,8 @@
       "id": "api",
       "type": "backend",
       "label": "FastAPI API Server",
-      "sublabel": ":8000",
-      "tag": "定義 / run / 排程",
+      "sublabel": ":8000 · 可開多個 process",
+      "tag": "同時處理上限 40",
       "pos": [
         330,
         240
@@ -112,6 +113,9 @@
           "path": "app/main.py"
         },
         {
+          "path": "app/core/concurrency.py"
+        },
+        {
           "path": "app/api/workflows.py"
         }
       ]
@@ -120,7 +124,7 @@
       "id": "auth",
       "type": "security",
       "label": "Auth & Rate Limit",
-      "sublabel": "JWT + bcrypt",
+      "sublabel": "JWT · 資源隔離",
       "pos": [
         330,
         100
@@ -132,6 +136,9 @@
       "sources": [
         {
           "path": "app/core/security.py"
+        },
+        {
+          "path": "app/core/ownership.py"
         },
         {
           "path": "app/core/rate_limit.py"
@@ -249,7 +256,7 @@
       "label": "外部服務",
       "sublabel": "GitHub / 網頁 / Discord",
       "pos": [
-        1170,
+        1150,
         240
       ],
       "size": [
@@ -263,12 +270,35 @@
       "label": "LM Studio",
       "sublabel": "qwen3.5-9b (本機)",
       "pos": [
-        1170,
+        1150,
         100
       ],
       "size": [
         170,
         64
+      ]
+    },
+    {
+      "id": "connections",
+      "type": "security",
+      "label": "Connections",
+      "sublabel": "Fernet 加密密鑰",
+      "tag": "執行時才解密",
+      "pos": [
+        1150,
+        380
+      ],
+      "size": [
+        160,
+        64
+      ],
+      "sources": [
+        {
+          "path": "app/tasks/connections.py"
+        },
+        {
+          "path": "app/core/connection_crypto.py"
+        }
       ]
     }
   ],
@@ -284,7 +314,8 @@
         "beat",
         "redis",
         "worker",
-        "worker_agent"
+        "worker_agent",
+        "connections"
       ]
     },
     {
@@ -376,6 +407,15 @@
       "label": "Pub/Sub 狀態",
       "variant": "dashed",
       "labelDy": 22
+    },
+    {
+      "id": "worker-secrets",
+      "from": "worker",
+      "to": "connections",
+      "label": "{{connections.x}}",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left"
     }
   ],
   "cards": [
@@ -383,26 +423,27 @@
       "dot": "emerald",
       "title": "執行模型",
       "items": [
-        "定義與 run 分離：run 保留步驟快照與版本號，可 /rerun 重跑、/retry 從失敗點續跑",
-        "8 種任務類型；python / shell 在受限 subprocess 執行，上游資料以 inputs 傳入",
-        "for_each 展開、reduce_of 依項目順序收斂，分支未命中標記 cancelled"
+        "定義與 run 分離，可 /rerun 重跑、/retry 從失敗點續跑；8 種任務類型，for_each / reduce_of 展開與收斂",
+        "task 以條件式 UPDATE 認領，重複投遞只執行一次；Beat 回收 worker 消失後卡在 RUNNING 的 task",
+        "agent_step 走獨立佇列，只有 worker-agent 裝 Codoctopus，以 structured output 回傳固定欄位"
       ]
     },
     {
-      "dot": "violet",
-      "title": "LLM 與排程",
+      "dot": "amber",
+      "title": "效能",
       "items": [
-        "agent_step 走獨立佇列，只有 worker-agent 裝 Codoctopus，以 structured output 回傳固定欄位",
-        "Celery Beat 每 60 秒檢查 cron 排程；Redis Pub/Sub + WebSocket 即時推播狀態"
+        "Locust：單一 API process 約 240 RPS，4 個 process 在 300 人時 554 RPS、零錯誤",
+        "每個 process 同時最多處理 40 個請求（小於連線池），過載時排隊而不是互卡",
+        "連線預算：api 50、worker / beat 每個 process 5，加總低於 Postgres 上限"
       ]
     },
     {
       "dot": "rose",
-      "title": "安全與驗證",
+      "title": "安全",
       "items": [
-        "bcrypt + JWT；Redis 滑動窗口限流依登入身份計算",
-        "http_request / fetch_page 擋內網與 metadata 目標，轉址逐跳重驗",
-        "executor 整合測試跑在真的 Postgres 上；Locust 壓測 API"
+        "bcrypt + JWT；所有資源依使用者隔離，別人的一律 404；log 裡的 token 自動遮蔽",
+        "SSRF 防護只放行公開位址，轉址逐跳重驗；python / shell 在受限 subprocess 執行",
+        "密鑰加密存放、執行時才代換，sandbox 拿不到任何機密"
       ]
     }
   ]

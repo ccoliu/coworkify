@@ -59,6 +59,7 @@ const SECTIONS = [
     ['data', '資料怎麼在步驟之間流動'],
     ['retry', 'Retry 與 Re-run'],
     ['schedule', '設成定期執行'],
+    ['connections', '密鑰（Connections）'],
     ['troubleshooting', '卡住的時候'],
     ['api', '用 API 做同一件事'],
 ]
@@ -149,6 +150,15 @@ const TASK_TYPES: { type: string; label: string; summary: ReactNode; fields: [st
         fields: [
             ['url', '必填', <>要打的網址；可用 <Mono>{'{{steps...}}'}</Mono> 模板組出來</>],
             ['method', '選填', 'GET / POST / PUT / PATCH / DELETE，預設 GET'],
+            [
+                'headers',
+                '選填',
+                <>
+                    JSON 物件。需要 token 時寫 <Mono>{'{"Authorization": "Bearer {{connections.github}}"}'}</Mono>
+                    ，見<a href="#connections" className="text-accent hover:underline">密鑰</a>
+                </>,
+            ],
+            ['body', '選填', 'POST / PUT / PATCH 時送出的 JSON；GET 留空'],
             ['timeout_seconds', '選填', '預設 10'],
         ],
     },
@@ -172,6 +182,24 @@ const TASK_TYPES: { type: string; label: string; summary: ReactNode; fields: [st
             ],
             ['operator', '必填', '= / ≠ / &gt; / ≥ / &lt; / ≤ / contains / is true / is empty 等'],
             ['right', '選填', 'is true、is false、is empty、is not empty 這幾個不需要填'],
+        ],
+    },
+    {
+        type: 'notify',
+        label: 'Notify (Discord)',
+        summary: <>送一則 Discord 通知，通常放在 workflow 的最後一步。Discord 限流時會丟錯誤，交給重試處理。</>,
+        fields: [
+            ['message', '必填', <>內文；接上游結果可用 <Mono>{'{{steps.<key>.result...}}'}</Mono>，dict / list 會轉成 JSON</>],
+            ['title', '選填', '標題，預設 Coworkify'],
+            ['link', '選填', '填了標題就變成可點的連結'],
+            ['level', '選填', 'info / success / warning / critical，決定顏色'],
+            [
+                'webhook_url',
+                '選填',
+                <>
+                    建議填 <Mono>{'{{connections.<name>}}'}</Mono>；留空用 worker 的 <Mono>DISCORD_WEBHOOK_URL</Mono>
+                </>,
+            ],
         ],
     },
     {
@@ -445,6 +473,45 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                 </p>
             </Section>
 
+            <Section id="connections" title="密鑰（Connections）">
+                <p>
+                    GitHub token、Discord webhook 這類密鑰不要直接寫進步驟裡——定義會被看到、會被複製。先到{' '}
+                    <Link to="/connections" className="text-accent hover:underline">
+                        Connections
+                    </Link>{' '}
+                    → New connection 存一組（例如名稱 <Mono>github</Mono>），再在步驟裡寫{' '}
+                    <Mono>{'{{connections.github}}'}</Mono> 引用它。
+                </p>
+                <Table
+                    head={['可以放的位置', '例子']}
+                    rows={[
+                        [
+                            <Mono>http_request</Mono>,
+                            <>
+                                headers：<Mono>{'{"Authorization": "Bearer {{connections.github}}"}'}</Mono>；也可以放在 url
+                            </>,
+                        ],
+                        [<Mono>fetch_page</Mono>, 'url（網址裡帶 key 的頁面）'],
+                        [<Mono>notify</Mono>, <>webhook_url：<Mono>{'{{connections.discord}}'}</Mono></>],
+                    ]}
+                />
+                <ul className="flex flex-col gap-2 pl-4">
+                    <li className="list-disc">
+                        值以加密形式存放，存進去之後<strong className="text-ink">不會再顯示</strong>
+                        ；要換就按 Replace value。名稱不能改，因為步驟靠名稱引用它。
+                    </li>
+                    <li className="list-disc">
+                        worker 執行那一步時才解密代換。資料庫裡的步驟內容永遠只有 <Mono>{'{{connections.github}}'}</Mono>
+                        ，結果與錯誤訊息裡如果出現密鑰，會被換成 <Mono>{'<connection:github>'}</Mono>。
+                    </li>
+                    <li className="list-disc">
+                        <strong className="text-ink">python / shell 拿不到密鑰</strong>
+                        ：寫在它們的程式碼裡，存檔時就會被擋下。要帶 token 打 API，請改用 http_request。
+                    </li>
+                    <li className="list-disc">每個人只看得到、用得到自己建立的 connection。</li>
+                </ul>
+            </Section>
+
             <Section id="troubleshooting" title="卡住的時候">
                 <Table
                     head={['症狀', '多半是']}
@@ -465,16 +532,19 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                             '改了程式碼但行為沒變',
                             <>
                                 改的若是 <Mono>app/tasks/</Mono> 底下的檔案，要{' '}
-                                <Mono>docker compose restart worker worker-agent beat</Mono>，Celery worker 不會自動重載
+                                <Mono>docker compose --profile agent restart worker worker-agent beat</Mono>
+                                ，Celery worker 不會自動重載；沒加 <Mono>--profile agent</Mono> 時 worker-agent 會被略過
                             </>,
                         ],
                         [
+                            <Mono>Connection not found: github</Mono>,
+                            '名稱打錯，或還沒在 Connections 頁建立；別人的 connection 也一樣用不到',
+                        ],
+                        [
                             <>
-                                用到 <Mono>reduce_of</Mono> 的定義不能在畫布編輯
+                                存檔時說 <Mono>{'{{connections.*}}'}</Mono> 只能用在…
                             </>,
-                            <>
-                                畫布還不支援 reduce，請用 <Mono>PUT /definitions/{'{id}'}</Mono> 修改
-                            </>,
+                            '密鑰放在不允許的欄位（例如 python 的程式碼）；改用 http_request 的 headers',
                         ],
                     ]}
                 />
