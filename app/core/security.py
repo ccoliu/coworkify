@@ -54,4 +54,12 @@ def get_current_user(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
+    # 驗完身分就把連線還回 pool。這個 dependency 跑在 thread 裡，但請求接著還要排隊等另一條
+    # thread 跑 endpoint；不還的話，連線會被「排隊中、什麼都沒做」的請求一路占到請求結束——
+    # event loop 能同時收的請求遠多於 pool 的 50 條，壓測 150 人時就是這樣把 pool 占滿、
+    # 等滿 30 秒變成 500。先 expunge 再 rollback：user 的欄位已經載入，脫離 session 之後
+    # 照樣能讀（各 endpoint 只用到 current_user.id），rollback 結束交易、連線就回到 pool；
+    # endpoint 真的要查資料時，同一個 session 會再借一條。
+    db.expunge(user)
+    db.rollback()
     return user

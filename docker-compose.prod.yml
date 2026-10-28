@@ -1,0 +1,13 @@
+# 接近正式環境的跑法：api 開多個 process、Postgres 放寬連線上限。
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile agent up -d
+# 開發時不用疊這個檔：開發用的 api 開著 --reload，它跟 --workers 不能同時用。
+#
+# 連線預算（見 app/db.py）：每個 api process 最多 50 條，worker / beat 每個 process 最多 5 條，
+#   4 × 50（api）+ 4 × 5（worker）+ 2 × 5（worker-agent）+ 5（beat）= 235 < 300
+# 多開 api process 時要一起調高 max_connections。
+services:
+  postgres:
+    command: ["postgres", "-c", "max_connections=300"]
+
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-4}

@@ -9,7 +9,7 @@ English | [繁體中文](README.md)
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** is a lightweight, high-performance, and flexible distributed task scheduling and management platform (architecturally inspired by Apache Airflow and Celery). Users and microservices can define, schedule, track, and monitor asynchronous tasks through a RESTful API, with support for chaining multiple tasks into a DAG workflow, using Redis + Postgres + Celery, load-tested with Locust at about 240 RPS from a single API process (p95 220 ms at 100 concurrent users, zero errors at 150 — see [Benchmark Results](#benchmark-results)).
+**Coworkify** is a lightweight, high-performance, and flexible distributed task scheduling and management platform (architecturally inspired by Apache Airflow and Celery). Users and microservices can define, schedule, track, and monitor asynchronous tasks through a RESTful API, with support for chaining multiple tasks into a DAG workflow, using Redis + Postgres + Celery, load-tested with Locust at about 240 RPS from a single API process and 554 RPS from four, with zero errors at 300 concurrent users (see [Benchmark Results](#benchmark-results)).
 
 ![alt text](<coworkify.png>)
 ---
@@ -315,6 +315,31 @@ Per endpoint at 100 users:
 - **What the API accepts ≠ what the workers finish.** In two minutes the API accepted about 8,000 tasks and 4,000 workflows, while the `concurrency=4` worker finished about 1,000 in the same window — a third of the traffic is `heavy_computation`, which really sleeps for a second. The table measures the API's intake; the queue backlog drains after the test ends.
 
 **A bug this benchmark caught: the database connection budget.** The first round returned 24 errors at 150 users, with Postgres logging `FATAL: sorry, too many clients already`: every process (the API, each worker child, beat) allowed up to 100 connections, far beyond Postgres's default of 100 in total. Shrinking every pool to 10 + 10 made it worse — the API deadlocked. A request runs `get_current_user` in a thread first, takes a connection and keeps it, then queues for another thread to run the endpoint; with fewer connections than the 40-thread pool, the two sides wait on each other until `pool_timeout` turns them into 500s, and throughput at 150 users fell to 5 RPS. The final budget gives the API 50 connections (no smaller than its thread pool) and each worker and beat process 5, 85 in total, under 100. The table above uses that configuration; the test never used more than 60 connections.
+
+### Multiple API processes
+
+With a single API process as the bottleneck, the next round ran `uvicorn --workers N` (2026-10-28, against a separate Postgres container with `max_connections=400`, otherwise the same conditions):
+
+| API processes | Concurrent users | Throughput | p95 | Failures |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 150 | 236 RPS | 460 ms | 0 |
+| 1 | 300 | 226 RPS | 1,200 ms | 0 |
+| 2 | 300 | 373 RPS | 850 ms | 0 |
+| 4 | 300 | **554 RPS** | 450 ms | 0 |
+
+Four processes give 2.4× a single one; at that point Postgres is at 110% CPU and becomes the next bottleneck. A single process at 300 users holds its throughput and only gets slower — the extra requests queue, and none fail.
+
+**Three bugs the multi-process run caught** — on the first attempt every multi-process round failed, and a single process stalled completely at 300 users:
+
+1. **Several processes starting at once took the whole server down.** Each process runs `create_all` on startup; on an empty database two of them both see "table missing", both create it, and the loser hits a duplicate key — uvicorn then stops every process. Fix: take a Postgres advisory lock before creating tables so they go one at a time.
+2. **Authentication pinned a database connection.** `get_current_user` loads the user in a worker thread, then the request queues for another thread to run the endpoint — and kept its connection the whole time. Requests that were only waiting filled the pool, and after 30 seconds they turned into 500s. Fix: end the transaction right after loading the user, returning the connection to the pool.
+3. **Deadlock when more requests were in progress than there were connections.** A synchronous request passes through the thread pool several times (auth, endpoint, response serialisation) and holds its connection across all of them. At the stall, all 40 threads were waiting for a connection while all 50 connections were held by requests waiting for a thread, at 0% CPU. uvicorn's `--limit-concurrency` doesn't help — it counts open connections, idle keep-alive ones included, and rejected huge numbers of requests with 503. Fix: a middleware that admits at most 40 HTTP requests at a time (fewer than the 50 pool connections) and queues the rest on the event loop, before they touch the database, so the cycle can't form.
+
+Each has a regression test (`tests/test_startup.py`, `tests/test_auth_connection_release.py`, `tests/test_concurrency_limit.py`). The multi-process setup lives in `docker-compose.prod.yml`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile agent up -d
+```
 
 > The 194.5 RPS in earlier versions of this README (2026-08-30) was measured before JWT auth, per-user isolation and task claiming, under different conditions, and is superseded by the table above.
 

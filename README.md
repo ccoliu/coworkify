@@ -9,7 +9,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB.svg?style=flat&logo=React&logoColor=white)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=Docker&logoColor=white)](https://www.docker.com/)
 
-**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，以 Locust 壓測，單一 API process 在 100 個併發使用者時達到約 240 RPS、p95 220 ms，150 人時零錯誤（見[壓力測試報告](#壓力測試報告-benchmark-results)）。
+**Coworkify** 是一個輕量、高效且具備彈性的分散式任務排程與管理平台（架構靈感源自 Apache Airflow 與 Celery）。使用者與微服務可以透過 RESTful API 定義、排程、追蹤與監控各類非同步任務，並支援多任務串接成 DAG workflow，使用Redis + Postgres + Celery 組成，以 Locust 壓測，單一 API process 約 240 RPS，開 4 個 process 時 300 個併發使用者下 554 RPS、零錯誤（見[壓力測試報告](#壓力測試報告-benchmark-results)）。
 
 ![alt text](<coworkify.png>)
 ---
@@ -316,6 +316,31 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 - **API 收得下的量 ≠ worker 做得完的量。** 2 分鐘內 API 收下約 8,000 個 task 和 4,000 個 workflow，`concurrency=4` 的 worker 同期間只做完約 1,000 個——測試流量裡三分之一是會 `sleep(1)` 的 `heavy_computation`。上表量的是 API 的收件能力；佇列裡的積壓是在壓測結束後才慢慢消化掉的。
 
 **這次壓測抓到的 bug：資料庫連線預算。** 第一輪在 150 人時出現 24 個 500，Postgres 的 log 是 `FATAL: sorry, too many clients already`：每個 process（API、每個 worker 子 process、beat）的連線池上限都是 100，加起來遠超過 Postgres 預設的 100 條。把所有 process 都改小（10 + 10）反而讓 API 死結——一個請求會先在 thread 裡跑 `get_current_user` 拿走一條連線，再排隊等 thread 跑 endpoint；連線池比 thread pool（40 條）小時，兩邊互等到 `pool_timeout` 才變成 500，150 人時吞吐量掉到 5 RPS。最後的設定是 API 50 條（不小於 thread pool）、worker 與 beat 每個 process 5 條，全部加起來 85 條，小於 100；上表就是這個設定下的結果，壓測期間最多用到 60 條連線。
+
+### 多個 API process
+
+上面的瓶頸在單一 API process，所以接著用 `uvicorn --workers N` 多開 process 再量一次（2026-10-28，改用一台獨立的 Postgres 容器、`max_connections=400`，其餘條件相同）：
+
+| API process | 併發使用者 | 吞吐量 | p95 | 失敗 |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | 150 | 236 RPS | 460 ms | 0 |
+| 1 | 300 | 226 RPS | 1,200 ms | 0 |
+| 2 | 300 | 373 RPS | 850 ms | 0 |
+| 4 | 300 | **554 RPS** | 450 ms | 0 |
+
+4 個 process 是單一 process 的 2.4 倍；這時 Postgres 的 CPU 已經到 110%，下一個瓶頸換成資料庫。單一 process 在 300 人時吞吐量持平、延遲變長，多出來的請求在排隊，沒有任何失敗。
+
+**多 process 壓測抓到的三個 bug**——第一次跑時，多 process 的那幾輪全部失敗，單一 process 在 300 人時整個卡死：
+
+1. **多個 process 同時啟動就整個停掉。** 每個 process 啟動時都會跑 `create_all`；在空資料庫上，兩個 process 同時查到「表不存在」、同時建表，後到的撞上 duplicate key，uvicorn 看到有 child 啟動失敗就停掉整個服務。修法：建表前先拿 Postgres advisory lock，讓它們排隊。
+2. **驗證完身分後，連線一直被占著。** `get_current_user` 在 thread 裡查使用者，請求接著排隊等另一條 thread 跑 endpoint——這段等待期間連線沒有還回去，排隊中、什麼都沒做的請求就把連線池占滿，等滿 30 秒變成 500。修法：查完使用者就結束交易、把連線還回連線池。
+3. **同時處理的請求比連線多時互卡。** 一個同步請求會在 thread pool 裡跑好幾段（驗證、endpoint、序列化回應），連線跨過這幾段一直被拿著。卡住當下 40 條 thread 全在等連線，50 條連線全被「在等 thread 的請求」拿著，CPU 0%。uvicorn 的 `--limit-concurrency` 解決不了——它算的是開著的連線，keep-alive 的閒置連線也算，結果大量 503。修法：寫一個 middleware，同時處理的 HTTP 請求最多 40 個（小於連線池的 50），其餘在 event loop 裡排隊，排隊時還沒碰資料庫，所以不可能互卡。
+
+這三個都有對應的測試（`tests/test_startup.py`、`tests/test_auth_connection_release.py`、`tests/test_concurrency_limit.py`）。用多 process 跑的設定在 `docker-compose.prod.yml`：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile agent up -d
+```
 
 > 舊版 README 的 194.5 RPS（2026-08-30）是在認證改成 JWT、加上資源隔離與 task 認領機制之前，在另一套條件下量的，已由上表取代。
 

@@ -35,7 +35,12 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
-def get_db():
+async def get_db():
+    # 寫成 async：FastAPI 會把「同步」generator dependency 的收尾（db.close()、把連線還回
+    # pool）也丟進 thread pool；尖峰時 thread 全被在等連線的請求占住，做完的請求就排不到
+    # thread 還連線。async 的收尾在 event loop 上跑，不需要 thread，close() 的代價很小。
+    # 這只拿掉其中一段排隊——單靠它擋不住互卡，真正保證的是 app/core/concurrency.py 的
+    # 同時處理上限。session 本身照樣交給同步的 endpoint 在 thread 裡用。
     db = SessionLocal()
     try:
         yield db
