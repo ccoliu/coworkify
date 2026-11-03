@@ -209,6 +209,36 @@ def test_a_valid_for_each_plus_reduce_pipeline_is_accepted():
     assert wf.steps[2].reduce_of == "tailor"
 
 
+def test_a_cycle_through_for_each_and_reduce_of_is_rejected():
+    # a waits for r, t expands from a, r collects every t: nothing can start.
+    # depends_on alone shows no cycle (only a -> r), so this used to be
+    # accepted and the workflow then sat in pending forever.
+    with pytest.raises(ValidationError, match="循環依賴"):
+        WorkflowCreate.model_validate(
+            make_workflow(
+                steps=[
+                    {"key": "a", "name": "a", "task_type": "job_search", "payload": {}, "depends_on": ["r"]},
+                    {"key": "t", "name": "t", "task_type": "echo", "payload": {}, "for_each": "a"},
+                    {"key": "r", "name": "r", "task_type": "echo", "payload": {"message": "{{items}}"}, "reduce_of": "t"},
+                ]
+            )
+        )
+
+
+def test_a_step_after_the_reduce_is_still_fine():
+    # The for_each / reduce_of edges only point backwards here — no cycle.
+    WorkflowCreate.model_validate(
+        make_workflow(
+            steps=[
+                {"key": "s", "name": "s", "task_type": "job_search", "payload": {}},
+                {"key": "t", "name": "t", "task_type": "echo", "payload": {}, "for_each": "s"},
+                {"key": "r", "name": "r", "task_type": "echo", "payload": {"message": "{{items}}"}, "reduce_of": "t"},
+                {"key": "z", "name": "z", "task_type": "echo", "payload": {}, "depends_on": ["r"]},
+            ]
+        )
+    )
+
+
 # --- _format_for_interpolation --------------------------------------------
 
 

@@ -185,12 +185,19 @@ class StepsGraph(BaseModel):
                     )
 
         # loop detection
+        # for_each / reduce_of 也是「要等它先完成」的關係：for_each 要等來源 step
+        # 跑完才能展開，reduce_of 要等整組展開的 task 都跑完。只看 depends_on 的話，
+        # 像 a 依賴 r、t for_each a、r reduce_of t 這種環會被放行，結果三個互相等待、
+        # 沒有任何一個 task 會被派送，workflow 永遠停在 pending。
+        waits_on = {
+            s.key: [*s.depends_on, *(k for k in (s.for_each, s.reduce_of) if k)] for s in self.steps
+        }
         WHITE, GRAY, BLACK = 0,1,2
         color = {k: WHITE for k in key_set}
 
         def dfs(node: str):
             color[node] = GRAY
-            for dep in deps[node]:
+            for dep in waits_on[node]:
                 if color[dep] == GRAY:
                     raise ValueError(f"workflow 存在循環依賴: '{node}' <-> '{dep}'")
                 if color[dep] == WHITE:
