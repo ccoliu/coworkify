@@ -153,12 +153,22 @@ jobs:
           # worker 用 root 跑，跟正式環境的容器一樣。sandbox 把子程序的 RLIMIT_NPROC 設成 32，
           # 這個上限算的是「同一個使用者的所有 process 與 thread」，而且只對非 root 生效——
           # runner 使用者光是 runner 本身就有幾十個 thread，shell 步驟裡的 $(...) 會 fork 失敗。
-          sudo -E env "PATH=$PATH" celery -A app.celery_app.celery_app worker -Q celery --concurrency=2 --loglevel=info > worker.log 2>&1 &
+          # 環境變數用 env 明確帶過去，不靠 sudo -E：Ubuntu 26 的 runner 換了 sudo 實作，
+          # 它不支援 -E、會直接忽略，worker 拿不到 DATABASE_URL，一啟動就崩潰。
+          sudo env "PATH=$PATH" "DATABASE_URL=$DATABASE_URL" "REDIS_URL=$REDIS_URL" "JWT_SECRET=$JWT_SECRET" \
+            celery -A app.celery_app.celery_app worker -Q celery --concurrency=2 --loglevel=info > worker.log 2>&1 &
+          api_up=""
           for i in $(seq 1 30); do
-            curl -sf localhost:8000/health && exit 0
+            curl -sf localhost:8000/health && api_up=1 && break
             sleep 1
           done
-          echo "API did not come up"; cat api.log; exit 1
+          [ -n "$api_up" ] || { echo "API did not come up"; cat api.log; exit 1; }
+          # worker 起不來的話在這裡就失敗，而不是讓每個 e2e 測試各等 90 秒才逾時
+          for i in $(seq 1 30); do
+            grep -q "ready\." worker.log && exit 0
+            sleep 1
+          done
+          echo "Celery worker did not come up"; cat worker.log; exit 1
 
       - name: Run end-to-end tests
         run: pytest tests/e2e -q -rs
