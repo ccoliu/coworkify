@@ -24,6 +24,7 @@ CONNECTION_FIELDS: dict[str, tuple[str, ...]] = {
     "http_request": ("url", "headers"),
     "fetch_page": ("url",),
     "notify": ("webhook_url",),
+    "wait_for": ("url", "headers"),
 }
 
 

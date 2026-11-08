@@ -94,6 +94,122 @@ def _parse_json_body(raw):
     except json.JSONDecodeError as exc:
         raise ValueError(f"payload.body 不是合法的 JSON: {exc}") from exc
 
+class NotReady(Exception):
+    """sensor 的條件還沒成立：poke_after 秒後再檢查一次。不是失敗。"""
+
+    def __init__(self, poke_after: int, detail: str = ""):
+        super().__init__(detail or f"Not ready; checking again in {poke_after}s")
+        self.poke_after = poke_after
+        self.detail = detail
+
+_WAIT_FOR_DEFAULT_INTERVAL = 30
+_WAIT_FOR_MIN_INTERVAL = 5
+# 上限要遠小於 Redis broker 的 visibility_timeout（預設 1 小時）：
+# countdown 比它長的訊息會被 broker 當成沒人處理而重送。
+_WAIT_FOR_MAX_INTERVAL = 600
+_WAIT_FOR_DEFAULT_TIMEOUT = 3600
+_WAIT_FOR_MIN_TIMEOUT = 1
+_WAIT_FOR_MAX_TIMEOUT = 86400
+_WAIT_FOR_REQUEST_TIMEOUT = 10
+_MISSING = object()
+
+def _clamped_int(payload: Dict[str, Any], key: str, default: int, low: int, high: int) -> int:
+    raw = payload.get(key)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except(TypeError, ValueError) as exc:
+        raise ValueError(f"payload.{key} 必須是整數") from exc
+    return max(low, min(high, value))
+
+def wait_for_timeout_seconds(payload: Dict[str, Any]) -> int:
+    return _clamped_int(
+        payload, "timeout_seconds", _WAIT_FOR_DEFAULT_TIMEOUT, _WAIT_FOR_MIN_TIMEOUT, _WAIT_FOR_MAX_TIMEOUT
+    )
+
+def _lookup_json_path(document: Any, path: str) -> Any:
+    """
+    點分隔路徑取值，數字段可以當陣列索引，例如 workflow_runs.0.status。
+    找不到回 _MISSING 而不是 None：欄位真的是 null 跟「還沒有這個欄位」不一樣。
+    """
+    value = document
+    for part in path.split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdecimal() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return _MISSING
+    return value
+
+def _parse_expected(raw: Any) -> list:
+    """
+    回傳「算完成」的值 list。畫布的欄位只能送文字，所以文字是 JSON 陣列時才解析——
+    純量文字不解析，否則 "200" 會變成數字 200，比對就不再分型別。
+    要比對數字或布林，畫布上寫成 [200]、[true]。
+    """
+    # 上游參照解析失敗會得到 None：拿 None 去比對，sensor 只會白等到逾時
+    if raw is None or raw == "":
+        raise ValueError("payload.expected is required for wait_for task")
+    if isinstance(raw, str) and raw.strip().startswith("["):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"payload.expected 不是合法的 JSON 陣列: {exc}") from exc
+    expected = raw if isinstance(raw, list) else [raw]
+    if not expected:
+        raise ValueError("payload.expected 不能是空的 list")
+    return expected
+
+def _same_json_value(left: Any, right: Any) -> bool:
+    # Python 的 True == 1，但在 JSON 裡布林和數字是不同的東西
+    return isinstance(left, bool) == isinstance(right, bool) and left == right
+
+def handle_wait_for(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    sensor：檢查一次某個 JSON 欄位是不是到了期望的值。還沒到就丟 NotReady，
+    由 executor 把 task 轉成 WAITING、排定下一次檢查，等待期間不佔 worker。
+
+    非 2xx 或不是 JSON 是「設定或對方壞了」，丟一般例外走重試；
+    欄位找不到則是「還沒好」，例如剛觸發的 CI，run 的 list 還是空的。
+    """
+    url = payload.get("url")
+    if not url:
+        raise ValueError("payload.url is required for wait_for task")
+    path = str(payload.get("path") or "").strip()
+    if not path:
+        raise ValueError("payload.path is required for wait_for task")
+    expected = _parse_expected(payload.get("expected"))
+    interval = _clamped_int(
+        payload, "interval_seconds", _WAIT_FOR_DEFAULT_INTERVAL, _WAIT_FOR_MIN_INTERVAL, _WAIT_FOR_MAX_INTERVAL
+    )
+    wait_for_timeout_seconds(payload) # 格式不對要在第一次檢查就報錯，而不是等到條件不成立時
+
+    _validate_public_url(url)
+    headers = _parse_json_payload_field(payload.get("headers"), "headers")
+    response = requests.get(url, headers=headers, timeout=_WAIT_FOR_REQUEST_TIMEOUT, allow_redirects=False)
+
+    if not 200 <= response.status_code < 300:
+        raise RuntimeError(f"wait_for got HTTP {response.status_code}: {response.text[:200]}")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise ValueError(f"wait_for expected a JSON response: {response.text[:200]}") from exc
+    
+    actual = _lookup_json_path(body, path)
+    if actual is _MISSING:
+        raise NotReady(interval, f"{path} 還不存在")
+    if not any(_same_json_value(actual, value) for value in expected):
+        raise NotReady(interval, f"{path} 目前是 {json.dumps(actual, ensure_ascii=False)[:200]}")
+
+    return {
+        "status_code": response.status_code,
+        "response_body": body,
+        "waited_seconds": int(payload.get("_sensor", {}).get("waited_seconds", 0)),
+    }
+
+
 _FETCH_MAX_BYTES = 2 * 1024 * 1024
 _FETCH_MAX_REDIRECTS = 3
 _FETCH_TEXT_LIMIT = 4000
@@ -595,8 +711,12 @@ TASK_REGISTRY = {
     "condition": handle_condition,
     "input": handle_input,
     "fetch_page": handle_fetch_page,
-    "notify": handle_notify
+    "notify": handle_notify,
+    "wait_for": handle_wait_for,
 }
+
+# 哪些 task_type 是 sensor，以及怎麼從 payload 算出它的逾時秒數
+SENSOR_TIMEOUTS = {"wait_for": wait_for_timeout_seconds}
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數
 def get_task_handler(task_type: str):

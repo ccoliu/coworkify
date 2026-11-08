@@ -29,10 +29,11 @@ export function Ops() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
         <StatTile label="Pending" value={display(byStatus.pending)} />
         <StatTile label="Running" value={display(byStatus.running)} tone="default" />
         <StatTile label="Retrying" value={display(byStatus.retrying)} tone="warning" />
+        <StatTile label="Waiting" value={display(byStatus.waiting)} />
         <StatTile label="Success" value={display(byStatus.success)} tone="good" />
         <StatTile label="Failed" value={display(byStatus.failed)} tone="critical" />
         <StatTile label="Queue depth" value={queueDepth} />

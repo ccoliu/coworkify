@@ -4,6 +4,8 @@ const STYLES: Record<TaskStatus, { dot: string; text: string; label: string }> =
   pending: { dot: 'bg-ink-muted', text: 'text-ink-secondary', label: 'Pending' },
   running: { dot: 'bg-accent animate-pulse', text: 'text-accent', label: 'Running' },
   retrying: { dot: 'bg-status-warning', text: 'text-status-warning', label: 'Retrying' },
+  // 跟 running 同色但不閃爍：這段時間沒有在執行，只是排定了下一次檢查
+  waiting: { dot: 'bg-accent', text: 'text-accent', label: 'Waiting' },
   success: { dot: 'bg-status-good', text: 'text-status-good', label: 'Success' },
   failed: { dot: 'bg-status-critical', text: 'text-status-critical', label: 'Failed' },
   cancelled: { dot: 'bg-ink-muted', text: 'text-ink-muted', label: 'Cancelled' },

@@ -9,6 +9,7 @@ const STATUS_BORDER: Record<TaskStatus, string> = {
     pending: 'border-border',
     running: 'border-accent ring-2 ring-accent/20',
     retrying: 'border-status-warning',
+    waiting: 'border-accent border-dashed',
     success: 'border-status-good',
     failed: 'border-status-critical ring-2 ring-status-critical/15',
     cancelled: 'border-border opacity-55'

@@ -19,6 +19,7 @@ const MINIMAP_COLOR: Record<TaskStatus, string> = {
     pending: 'var(--color-baseline)',
     running: 'var(--color-accent)',
     retrying: 'var(--color-status-warning)',
+    waiting: 'var(--color-accent)',
     success: 'var(--color-status-good)',
     failed: 'var(--color-status-critical)',
     cancelled: 'var(--color-gridline)',

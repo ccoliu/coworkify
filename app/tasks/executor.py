@@ -10,12 +10,12 @@ from app.celery_app import celery_app, DEDICATED_QUEUES
 from app.db import SessionLocal
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
-from app.tasks.handler import get_task_handler, TASK_REGISTRY
+from app.tasks.handler import get_task_handler, TASK_REGISTRY, NotReady, SENSOR_TIMEOUTS
 from app.tasks.connections import resolve_connections, scrub
 import os
 import redis
 import json
-from sqlalchemy import select, update
+from sqlalchemy import select, update, and_, or_
 from app.models.workflow import Workflow, WorkflowStep, WorkFlowStatus, WorkflowStepTemplate
 
 REDIS_URL = os.getenv("REDIS_URL")
@@ -48,6 +48,8 @@ def execute_task(self, task_id: str):
         # scheduled_at 排定了未來執行、在 eta 到之前被刪掉的 task。
         if task.deleted_at is not None:
             return f"Task {task_uuid} was deleted"
+        
+        previous_status = task.status
 
         # 1. 認領：同一個 task 可能被投遞不只一次（join 的兩個上游同時完成、broker 重送），
         #    只有把它從 PENDING/RETRYING 改成 RUNNING 的那一次能往下執行 handler。
@@ -63,12 +65,25 @@ def execute_task(self, task_id: str):
         
         # 3. 代換 {{connections.x}}：明文只存在這一份 payload 裡，不寫回資料庫
         payload, secrets = resolve_connections(db, task)
+        payload = _start_sensor_clock(db, task, payload)
         result = scrub(handler(payload), secrets)
         execute_time_ms = (time.time() - start_time) * 1000
 
         # 4. 執行成功
         record_task_success(db, task, result, execute_time_ms)
         return result
+    
+    except NotReady as not_ready:
+        execute_time_ms = (time.time() - start_time) * 1000
+        timeout_message = record_sensor_not_ready(
+            db, task, not_ready,
+            first_wait=previous_status != TaskStatus.WAITING,
+            secrets=secrets,
+            execute_time_ms=execute_time_ms,
+        )
+        if timeout_message:
+            raise TimeoutError(timeout_message) from None
+        return f"Task {task_uuid} is waiting"
 
     except Exception as exc:
         # 還沒認領就出錯（例如連不上 DB）：這次投遞不擁有這個 task，不能替它記失敗
@@ -95,23 +110,90 @@ def execute_task(self, task_id: str):
 
 def claim_task(db, task_id: uuid.UUID) -> bool:
     """
-    把 task 從 PENDING/RETRYING 改成 RUNNING，成功（這次投遞拿到執行權）回傳 True。
+    把 task 從 PENDING/RETRYING/到期的 WAITING 改成 RUNNING，成功（這次投遞拿到執行權）回傳 True。
 
     用一句帶條件的 UPDATE 而不是「先讀狀態、再改」：兩個 worker 同時讀到 PENDING 時，
     資料庫只會讓其中一句 UPDATE 改到這一列，另一句的 rowcount 是 0。
     立刻 commit——RUNNING 必須在 handler 產生任何副作用之前就讓其他 worker 看得到。
+
+    WAITING 一定要到期才能認領：sensor 每次檢查完都會回到 WAITING，如果不看時間，
+    重複的訊息（復原重新派送、broker 重送）也能認領成功，還會再派送自己的下一次檢查，
+    變成好幾條輪詢鏈同時跑到 sensor 結束。到期條件讓多出來的訊息領不到就結束。
     """
+    now = datetime.utcnow()
     result = db.execute(
         update(Task)
         .where(
             Task.id == task_id,
-            Task.status.in_([TaskStatus.PENDING, TaskStatus.RETRYING]),
-            Task.deleted_at.is_(None),
+            or_(
+                Task.status.in_([TaskStatus.PENDING, TaskStatus.RETRYING]),
+                and_(Task.status == TaskStatus.WAITING, Task.scheduled_at <= now)
+            ),
+            Task.deleted_at.is_(None)
         )
-        .values(status=TaskStatus.RUNNING, claimed_at=datetime.utcnow())
+        .values(status=TaskStatus.RUNNING, claimed_at=now)
     )
     db.commit()
     return result.rowcount == 1
+
+def _start_sensor_clock(db, task: Task, payload: dict) -> dict:
+    """
+    第一次檢查時開始計時，回傳給 handler 用的 payload（多一個 _sensor，不寫回資料庫）。
+    要在 handler 之前 commit：handler 丟例外時 execute_task 會 rollback，計時不能跟著消失。
+    """
+    if task.task_type not in SENSOR_TIMEOUTS:
+        return payload
+    now = datetime.utcnow()
+    if task.wait_started_at is None:
+        task.wait_started_at = now
+        db.commit()
+    return {**payload, "_sensor": {"waited_seconds": (now - task.wait_started_at).total_seconds()}}
+
+def record_sensor_not_ready(
+    db, task: Task, not_ready: NotReady, *, first_wait: bool, secrets: dict[str, str], execute_time_ms: float = 0.0
+) -> Optional[str]:
+    """
+    sensor 的條件還沒成立：逾時就標 FAILED 並回傳錯誤訊息，否則轉成 WAITING、排定下一次檢查並回傳 None。
+
+    逾時不重試：重試只是再等一次，Airflow 的 sensor timeout 也是直接失敗。
+    每次檢查都寫 TaskLog 的話，等一小時就是上百筆，所以只有進入 WAITING 的那一次寫。
+    """
+    now = datetime.utcnow()
+    detail = scrub(not_ready.detail, secrets)
+    task.claimed_at = None
+
+    timeout_seconds = SENSOR_TIMEOUTS[task.task_type](task.payload)
+    waited_seconds = (now - task.wait_started_at).total_seconds()
+    if waited_seconds >= timeout_seconds:
+        message = f"Timed out after {int(waited_seconds)}s (timeout_seconds={timeout_seconds}): {detail}"
+        task.status = TaskStatus.FAILED
+        task.wait_started_at = None
+        db.add(TaskLog(
+            task_id=task.id,
+            status=TaskStatus.FAILED,
+            error_message=message,
+            execution_time_ms=execute_time_ms,
+        ))
+        db.commit()
+        notify_status_change(str(task.id), TaskStatus.FAILED, None, message)
+        advance_workflow(db, task)
+        return message
+    
+    task.status = TaskStatus.WAITING
+    task.scheduled_at = now + timedelta(seconds=not_ready.poke_after)
+    result = {"detail": detail, "next_check_in_seconds": not_ready.poke_after}
+    if first_wait:
+        db.add(TaskLog(
+            task_id=task.id,
+            status=TaskStatus.WAITING,
+            result=result,
+            execution_time_ms=execute_time_ms,
+        ))
+    db.commit()
+    notify_status_change(str(task.id), TaskStatus.WAITING, result, None)
+    # 這一步失敗的話 task 留在 WAITING，由 recover_lost_waiting_tasks 補派送
+    dispatch_task(task, countdown=not_ready.poke_after)
+    return None
 
 def _format_for_interpolation(value) -> str:
     """
@@ -133,6 +215,7 @@ def record_task_success(db, task: Task, result, execute_time_ms: float = 0.0):
         execution_time_ms=execute_time_ms,
     ))
     task.claimed_at = None
+    task.wait_started_at = None
     db.commit()
     advance_workflow(db, task)
 
@@ -160,6 +243,7 @@ def record_task_failure(db, task: Task, error_message: str, execute_time_ms: flo
         return countdown
     else:
         task.status = TaskStatus.FAILED
+        task.wait_started_at = None
         notify_status_change(str(task.id), TaskStatus.FAILED, None, error_message)
         db.add(TaskLog(
             task_id=task.id,
@@ -190,11 +274,17 @@ def dispatch_task(task: Task, countdown: int | None = None):
 STALE_RUNNING_AFTER = {"agent_step": timedelta(minutes=30)}
 DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=10)
 
+# WAITING 過了排定時間這麼久還沒被檢查，就當作那則延遲訊息已經遺失
+# （countdown 的訊息放在 worker 記憶體裡，worker 重啟就沒了）。
+# 寬限要涵蓋佇列正常塞車的時間，塞車時多派一則雖然無害，也沒有必要。
+WAITING_RECOVERY_GRACE = timedelta(minutes=5)
+
 @celery_app.task(name="coworkify.recover_stale_tasks")
 def recover_stale_tasks():
     db = SessionLocal()
     try:
-        return recover_stale_running_tasks(db, datetime.utcnow())
+        now = datetime.utcnow()
+        return recover_stale_running_tasks(db, now) + recover_lost_waiting_tasks(db, now)
     finally:
         db.close()
 
@@ -230,6 +320,27 @@ def recover_stale_running_tasks(db, now:datetime) -> int:
         recovered += 1
     return recovered
 
+def recover_lost_waiting_tasks(db, now: datetime) -> int:
+    """
+    重新派送延遲訊息遺失的 WAITING task，回傳處理了幾個。
+
+    把 scheduled_at 推到現在，寬限期重新起算：worker 全掛的那段時間，Beat 每分鐘都在跑，
+    不這樣做每個 task 每分鐘都會多派一則訊息，全部堆在佇列裡。
+    """
+    tasks = db.scalars(
+        select(Task).where(
+            Task.status == TaskStatus.WAITING,
+            Task.scheduled_at < now - WAITING_RECOVERY_GRACE,
+            Task.deleted_at.is_(None),
+        )
+    ).all()
+    for task in tasks:
+        task.scheduled_at = now
+    db.commit()
+
+    for task in tasks:
+        dispatch_task(task)
+    return len(tasks)
 
 def _downstream_task_ids(all_steps: list[WorkflowStep], from_task_ids) -> set:
     """沿 depends_on 往下游走訪，回傳所有受 from_task_ids 影響的 task id（不含起點自己）。"""
@@ -556,6 +667,7 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
             continue
         t.status = TaskStatus.PENDING
         t.retry_count = 0
+        t.wait_started_at = None # 重跑的 sensor 從頭計時
         notify_status_change(str(t.id), TaskStatus.PENDING, None, None)
     
     workflow.status = WorkFlowStatus.PENDING

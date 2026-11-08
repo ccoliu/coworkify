@@ -170,6 +170,54 @@ TASK_TYPE_CATALOG = [
         ],
     },
     {
+        "task_type": "wait_for",
+        "label": "Wait for (sensor)",
+        "description": "反覆檢查一個回傳 JSON 的網址，直到某個欄位變成期望的值，例如等 CI 跑完。"
+                       "等待期間不佔 worker，狀態是 Waiting；超過 Timeout 就直接失敗，不重試。"
+                       "完成後的結果有 status_code、response_body、waited_seconds。",
+        "fields": [
+            {
+                "key": "url",
+                "label": "URL",
+                "kind": "string",
+                "default": "",
+                "required": True,
+                "help": "一律用 GET，不跟隨轉址，會擋掉解析到內網或 cloud metadata 的網址。",
+            },
+            {
+                "key": "headers",
+                "label": "Headers (JSON)",
+                "kind": "code",
+                "language": "json",
+                "default": "{}",
+                "required": False,
+                "help": "例如 {\"Authorization\": \"Bearer {{connections.github}}\"}。",
+            },
+            {
+                "key": "path",
+                "label": "Path",
+                "kind": "string",
+                "default": "",
+                "required": True,
+                "help": "回應 JSON 裡要看的欄位，用點分隔，數字代表陣列索引，例如 workflow_runs.0.status。"
+                        "找不到這個欄位視為還沒好，會繼續等。",
+            },
+            {
+                "key": "expected",
+                "label": "Expected",
+                "kind": "string",
+                "default": "",
+                "required": True,
+                "help": "欄位等於它就算完成，比對會分型別。直接填文字就是比對字串；"
+                        "要比對數字、布林或多個可能的值，填 JSON 陣列，例如 [200]、[true]、[\"completed\", \"skipped\"]。",
+            },
+            {"key": "interval_seconds", "label": "Interval (seconds)", "kind": "number", "default": 30, "required": False,
+             "help": "檢查間隔，範圍 5–600 秒。"},
+            {"key": "timeout_seconds", "label": "Timeout (seconds)", "kind": "number", "default": 3600, "required": False,
+             "help": "從第一次檢查算起最多等多久，範圍 1–86400 秒。"},
+        ],
+    },
+    {
         "task_type": "condition",
         "label": "Condition",
         "description": "評估一個條件，永遠成功並回傳 passed=true/false。下游步驟可以指定"

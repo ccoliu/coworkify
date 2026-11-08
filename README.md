@@ -16,7 +16,7 @@
 
 ## 核心特色 (Key Features)
 
-- **完整的任務生命週期管理**：支援 `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled` 狀態機流轉。
+- **完整的任務生命週期管理**：支援 `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `waiting` / `cancelled` 狀態機流轉。
 - **高性能非同步架構**：以 FastAPI 作為核心 API 閘道，結合 Redis 實現低延遲訊息佇列 (Message Broker)。
 - **任務優先級調度 (Priority Queue)**：每個任務帶 0–9 的優先度，**數字越小越先被 worker 取走**（0 最優先、9 最後，這是 Celery 搭配 Redis broker 的規則），讓重要任務插隊。
 - **排程與延遲執行**：支援立即執行、指定時間執行與定時排程。
@@ -53,12 +53,46 @@
 | `http_request` | 發送一個 HTTP 請求，會擋掉指向內網或 cloud metadata endpoint 的目標 |
 | `condition` | 評估一個條件並回傳 `passed=true/false`，本身永遠成功；下游用 `branch_of` + `branch_when` 指向它來實現 if/else 分支 |
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。填了 `output_fields`（例如 `{"fixable": "boolean", "effort": ["small", "large"]}`）會改用 structured output，結果直接是那個物件，下游可以 `inputs["judge"]["fixable"]` 取值。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
+| `wait_for` | sensor：反覆用 GET 檢查一個回傳 JSON 的網址，直到某個欄位（`path`，例如 `workflow_runs.0.status`）等於 `expected`，或超過 `timeout_seconds`。適合等 CI、部署這類外部工作，見下方說明 |
 | `notify` | 送一則 Discord webhook 通知（標題、內文、連結、等級決定顏色），通常放在 workflow 最後一步。webhook URL 預設讀 worker 的 `DISCORD_WEBHOOK_URL` 環境變數——它等同密碼，不建議寫進 workflow 定義 |
 > 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。CI 測的是釘住的 Codoctopus 版本（`.github/workflows/ci.yml` 的 `CODOCTOPUS_REF`），本機要跟它一致就在 checkout 裡 `git checkout <那個 SHA>`；另有每週排程改測 Codoctopus 的 `main`，提早發現上游的破壞性改動。
 >
 > 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
 
 > `python` 與 `shell` 以受限的 subprocess 執行（timeout、CPU / 記憶體上限、清空環境變數，見 `app/tasks/sandbox.py`）。**這不是完整沙箱**——它仍與 worker 共用檔案系統與網路，不要拿來跑不受信任的輸入。
+
+### `wait_for`：等外部條件成立
+
+`python` / `shell` 最多跑 60 秒，等不了要跑十分鐘的 CI。`wait_for` 用 reschedule 模式：條件還沒成立時 task 轉成 `waiting`、排定下一次檢查，立刻把 worker 讓出來。等一小時，實際佔用 worker 的只有每次檢查的那一下。
+
+| 欄位 | 說明 | 預設 / 範圍 |
+| :--- | :--- | :--- |
+| `url` | 要檢查的網址，SSRF 檢查與 `http_request` 相同，不跟隨轉址 | 必填 |
+| `headers` | JSON 物件，可以放 `{{connections.<name>}}` | 選填 |
+| `path` | 回應 JSON 裡要看的欄位，點分隔，數字代表陣列索引。找不到視為還沒好 | 必填 |
+| `expected` | 欄位等於它就算完成，比對會分型別；可以是單一值或 list（任一相符即可）。畫布上填文字就是比對字串，要比對數字、布林或多個值請填 JSON 陣列，例如 `[200]` | 必填 |
+| `interval_seconds` | 檢查間隔 | 30，5–600 |
+| `timeout_seconds` | 從第一次檢查算起最多等多久 | 3600，1–86400 |
+
+完成後的結果是 `{"status_code", "response_body", "waited_seconds"}`，下游可以直接讀 `response_body` 裡的欄位。
+
+- **`waiting` 不是失敗**：不消耗 `retry_count`，`task_logs` 也不會每次檢查都寫一筆，只有進入 `waiting`、成功、失敗時才寫。
+- **逾時直接失敗，不重試**：重試只是再等一次。下游會被串連取消，`POST /workflows/{id}/retry` 續跑時 sensor 從頭計時。
+- **檢查本身出錯算一般失敗**：回應非 2xx 或不是 JSON 會走既有的重試與指數退避，逾時的計時不會因此歸零。
+- **延遲訊息遺失會自動補回**：countdown 的訊息放在 worker 記憶體裡，worker 重啟就沒了。Beat 每分鐘找過了排定時間 5 分鐘還沒被檢查的 task，重新派送；`waiting` 的 task 要到期才認領得到，所以多出來的訊息不會變成第二條輪詢鏈。
+- **已知限制**：`waiting` 跟 `running` 一樣不會被平行分支的失敗取消，這條 workflow 已經標成 `failed` 時，sensor 仍會繼續檢查到成立或逾時。
+
+> 既有資料庫要先套 `scripts/migrations/2026_11_08_task_wait_started_at.sql`（`create_all` 不會替既有的表加欄位），再更新 api / worker / beat：
+>
+> ```powershell
+> # PowerShell：一定要指定 UTF-8，否則中文註解會把 SQL 吃掉
+> Get-Content -Encoding UTF8 scripts/migrations/2026_11_08_task_wait_started_at.sql | docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -'
+> ```
+>
+> ```bash
+> # bash
+> docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' < scripts/migrations/2026_11_08_task_wait_started_at.sql
+> ```
 
 早期的示範 handler（`echo`、`heavy_computation`、`flaky_task`、`job_search` 等）仍註冊在 `TASK_REGISTRY` 裡（既有資料與測試還在引用），但刻意不列進上面的目錄，前端的任務類型選單不會出現它們。
 
@@ -149,6 +183,7 @@ python -m pytest tests -q
 - `test_executor_*.py`：workflow 的派送、`inputs` 組裝、for_each / reduce（包含展開成 0 項）、分支取消、失敗與續跑、task 認領與回收卡在 RUNNING 的 task
 - `test_api_*.py`：用 FastAPI `TestClient` 打真正的 app——註冊登入與 JWT、限流、task 的建立／查詢／軟刪除、定義的版本號、run 的輸入驗證（422）、rerun 與 retry、排程的 CRUD 與 promote-to-schedule
 - `test_scheduler.py`：cron 排程的觸發、失敗記錄、台北時區
+- `test_wait_for.py`：sensor 的比對與夾值、`waiting` 不消耗重試、逾時直接失敗、重複訊息不會變成第二條輪詢鏈、遺失的延遲訊息會被補回
 - `test_handlers.py`：SSRF 防護（內網、cloud metadata、IPv4-mapped、轉址的每一跳）、`http_request`、`fetch_page` 的欄位擷取與大小上限、`notify`、`condition`、`input`。網路與 DNS 全部替換，不會真的連線
 - `test_sandbox.py`：真的起 subprocess 跑 `python` / `shell` 步驟——回傳值與 `inputs`、`get_input`、不繼承 worker 的機密環境變數、逾時連同背景子程序一起殺掉、記憶體上限。只在 Linux 上執行（Windows 會 skip）
 - `e2e/`：不替換任何東西，對一套正在跑的 API + Celery worker + Redis 從外部打 HTTP / WebSocket——分支加 for_each / reduce 的 workflow 跑到完成、併發下的 join 只執行一次、`self.retry` 的退避重試、WebSocket 推播。只在設了 `E2E_BASE_URL` 時執行（例如 `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`），CI 在獨立的 `e2e` job 裡起真的服務來跑
@@ -263,7 +298,7 @@ POST /definitions/{definition_id}/runs
 | `PATCH` | `/connections/{connection_id}` | 換一個新的值或改說明；名稱不能改，步驟靠它引用 |
 | `DELETE` | `/connections/{connection_id}` | 刪除；引用它的步驟之後執行會失敗並說明原因 |
 
-可以引用的位置：`http_request` 的 `url` 與 `headers`、`fetch_page` 的 `url`、`notify` 的 `webhook_url`，例如 `{"Authorization": "Bearer {{connections.github}}"}`。放在其他欄位（包括 `python` / `shell` 的程式碼）的引用，在建立定義時就會被擋下（422）。
+可以引用的位置：`http_request` 的 `url` 與 `headers`、`wait_for` 的 `url` 與 `headers`、`fetch_page` 的 `url`、`notify` 的 `webhook_url`，例如 `{"Authorization": "Bearer {{connections.github}}"}`。放在其他欄位（包括 `python` / `shell` 的程式碼）的引用，在建立定義時就會被擋下（422）。
 
 ### Schedules（週期性排程）
 | Method | Endpoint | 說明 |

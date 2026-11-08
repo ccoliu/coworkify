@@ -16,7 +16,7 @@ English | [繁體中文](README.md)
 
 ## Key Features
 
-- **Full task lifecycle management**: State machine covering `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `cancelled`.
+- **Full task lifecycle management**: State machine covering `pending` ➔ `running` ➔ `success` / `failed` / `retrying` / `waiting` / `cancelled`.
 - **High-performance async architecture**: FastAPI as the core API gateway, backed by Redis for a low-latency message broker.
 - **Priority queue scheduling**: Each task carries a priority from 0 to 9, and **lower numbers are taken by workers first** (0 is the most urgent and 9 the least — the rule Celery uses with a Redis broker), so important tasks can jump the queue.
 - **Scheduling & delayed execution**: Supports immediate execution, execution at a specific time, and recurring schedules.
@@ -51,6 +51,7 @@ This list is defined in `app/tasks/catalog.py` and served — along with each fi
 | `http_request` | Sends an HTTP request; targets pointing at private networks or cloud metadata endpoints are blocked |
 | `condition` | Evaluates a condition and returns `passed=true/false`. It always succeeds — downstream steps use `branch_of` + `branch_when` to point at it and implement if/else |
 | `agent_step` | Runs a [Codoctopus](https://github.com/ccoliu/Codoctopus) agent step — the payload carries `role` (system prompt), `instruction`, an optional `model` (`"provider:model"`), and `tools` (`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`). Setting `output_fields` (e.g. `{"fixable": "boolean", "effort": ["small", "large"]}`) switches to structured output: the result is that object itself, so downstream code can read `inputs["judge"]["fixable"]`. Requires `codoctopus` to be installed in the worker environment; see the note below. |
+| `wait_for` | A sensor: polls a URL that returns JSON with GET until a field (`path`, e.g. `workflow_runs.0.status`) equals `expected` or `timeout_seconds` runs out. Made for waiting on outside work such as CI or a deployment; see below |
 | `notify` | Sends a Discord webhook notification (title, message, link, and a level that sets the colour), usually as a workflow's last step. The webhook URL defaults to the worker's `DISCORD_WEBHOOK_URL` environment variable — it is effectively a password, so keep it out of workflow definitions |
 
 > The worker must be able to `import codoctopus` for `agent_step` to work. For local development: `pip install -e "<codoctopus-checkout>[anthropic]"` (the `[anthropic]` extra is required — the SDK is an optional dependency; `[openai]` / `[gemini]` / `[all]` also work, or point at an `ollama:` model and install no SDK at all). CI tests against a pinned Codoctopus version (`CODOCTOPUS_REF` in `.github/workflows/ci.yml`); to match it locally, `git checkout <that SHA>` in your checkout. A weekly scheduled run tests Codoctopus `main` instead, so upstream breaking changes show up early.
@@ -58,6 +59,39 @@ This list is defined in `app/tasks/catalog.py` and served — along with each fi
 > For containerized deployments you don't need codoctopus in every worker — `agent_step` is the only task type that needs it, so it is routed to a dedicated `agent_step` queue consumed only by the `worker-agent` service (see `Dockerfile.agent`), started with `docker compose --profile agent up`. All other workers are unaffected. To use it, set `CODOCTOPUS_PATH` (pointing at your local Codoctopus checkout) and `AGENT_STEP_DEFAULT_MODEL` in `.env`, plus whatever the provider needs (e.g. `ANTHROPIC_API_KEY`, or `OPENAI_BASE_URL` for a local OpenAI-compatible server). If an `agent_step` is scheduled in an environment with no worker-agent running it simply stays `pending` — it will not fail, and no other worker will pick it up by mistake.
 
 > `python` and `shell` run in a restricted subprocess (timeout, CPU / memory limits, a cleared environment — see `app/tasks/sandbox.py`). **This is not a full sandbox** — it still shares the worker's filesystem and network, so don't point it at untrusted input.
+
+### `wait_for`: waiting for an outside condition
+
+`python` and `shell` steps are capped at 60 seconds, which is too short to wait for a ten-minute CI run. `wait_for` uses reschedule mode: while the condition doesn't hold, the task moves to `waiting`, schedules its next check, and gives the worker back at once. An hour of waiting only occupies a worker for the moment of each check.
+
+| Field | Description | Default / range |
+| :--- | :--- | :--- |
+| `url` | The URL to check. Same SSRF checks as `http_request`; redirects are not followed | Required |
+| `headers` | A JSON object; may contain `{{connections.<name>}}` | Optional |
+| `path` | The field to read from the JSON response, dot-separated, with numbers as array indexes. A missing field counts as not ready | Required |
+| `expected` | The step completes when the field equals this. The comparison is type-sensitive; a single value or a list (any match) both work. Text entered on the canvas is compared as a string; for numbers, booleans, or several values, enter a JSON array such as `[200]` | Required |
+| `interval_seconds` | Time between checks | 30, 5–600 |
+| `timeout_seconds` | How long to wait, counted from the first check | 3600, 1–86400 |
+
+The result is `{"status_code", "response_body", "waited_seconds"}`, so downstream steps can read fields from `response_body` directly.
+
+- **`waiting` is not a failure**: it uses no `retry_count`, and `task_logs` gets a row when the task enters `waiting`, succeeds, or fails, not on every check.
+- **A timeout fails the step without retrying**: a retry would only wait again. Downstream steps are cancelled, and `POST /workflows/{id}/retry` starts the sensor's clock over.
+- **A check that errors is an ordinary failure**: a non-2xx or non-JSON response goes through the usual retries and exponential backoff, and the timeout clock keeps running.
+- **Lost delayed messages are sent again**: a countdown message lives in worker memory and disappears if the worker restarts. Every minute, Beat re-dispatches tasks more than 5 minutes past their scheduled check. A `waiting` task can only be claimed once it is due, so an extra message can't become a second polling chain.
+- **Known limitation**: like `running`, a `waiting` task is not cancelled when a parallel branch fails. Even after the workflow is marked `failed`, the sensor keeps checking until the condition holds or it times out.
+
+> Existing databases need `scripts/migrations/2026_11_08_task_wait_started_at.sql` applied first (`create_all` doesn't add columns to existing tables). Then update api, worker, and beat:
+>
+> ```powershell
+> # PowerShell: the UTF-8 flag is required, or the non-ASCII comments swallow the SQL
+> Get-Content -Encoding UTF8 scripts/migrations/2026_11_08_task_wait_started_at.sql | docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -'
+> ```
+>
+> ```bash
+> # bash
+> docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' < scripts/migrations/2026_11_08_task_wait_started_at.sql
+> ```
 
 The early demo handlers (`echo`, `heavy_computation`, `flaky_task`, `job_search`, …) are still registered in `TASK_REGISTRY` — existing rows and tests reference them — but are deliberately left out of the catalog above, so they don't appear in the frontend's task-type picker.
 
@@ -148,6 +182,7 @@ Run these on the host, not inside a container. Most tests connect to the Postgre
 - `test_executor_*.py`: workflow dispatch, `inputs` assembly, for_each / reduce (including expanding to 0 items), branch cancellation, failure and retry, task claiming, and recovery of tasks orphaned in RUNNING
 - `test_api_*.py`: the real app through FastAPI's `TestClient` — registration, login and JWT, rate limiting, task create / query / soft delete, definition versioning, run input validation (422), rerun vs retry, schedule CRUD and promote-to-schedule
 - `test_scheduler.py`: cron triggering, failure recording, and the Taipei timezone
+- `test_wait_for.py`: sensor matching and clamping, `waiting` using no retries, timeouts failing outright, duplicate messages not starting a second polling chain, lost delayed messages being sent again
 - `test_handlers.py`: the SSRF guard (private ranges, cloud metadata, IPv4-mapped addresses, every redirect hop), `http_request`, `fetch_page` field extraction and size limit, `notify`, `condition`, `input`. Network and DNS are replaced; nothing connects out
 - `test_sandbox.py`: real subprocesses running `python` / `shell` steps — return values and `inputs`, `get_input`, the worker's secret env vars not being inherited, timeouts killing background children too, the memory cap. Linux only (skipped on Windows)
 - `e2e/`: replaces nothing — drives a running API + Celery worker + Redis from the outside over HTTP and WebSocket: a workflow with a branch and for_each / reduce runs to completion, a join under real concurrency runs once, `self.retry` backs off and retries, and status changes reach the WebSocket. They only run when `E2E_BASE_URL` is set (e.g. `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`); CI starts real services for them in a separate `e2e` job
@@ -262,7 +297,7 @@ POST /definitions/{definition_id}/runs
 | `PATCH` | `/connections/{connection_id}` | Replace the value or the description; the name is fixed because steps refer to it |
 | `DELETE` | `/connections/{connection_id}` | Delete; steps that reference it fail with an explanation until it's recreated |
 
-References are allowed in `http_request`'s `url` and `headers`, `fetch_page`'s `url`, and `notify`'s `webhook_url` — e.g. `{"Authorization": "Bearer {{connections.github}}"}`. A reference anywhere else, including `python` / `shell` code, is rejected when the definition is saved (422).
+References are allowed in `http_request`'s and `wait_for`'s `url` and `headers`, `fetch_page`'s `url`, and `notify`'s `webhook_url` — e.g. `{"Authorization": "Bearer {{connections.github}}"}`. A reference anywhere else, including `python` / `shell` code, is rejected when the definition is saved (422).
 
 ### Schedules (recurring runs)
 | Method | Endpoint | Description |

@@ -15,6 +15,10 @@ class TaskStatus(str, Enum):
     RETRYING = "retrying"
     CANCELLED = "cancelled"
 
+    # sensor（例如 wait_for）檢查過、條件還沒成立：已經把 worker 讓出來，排定時間再檢查一次。
+    # 這是正常狀態，不是失敗，不消耗 retry_count。
+    WAITING = "waiting"
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -40,5 +44,8 @@ class Task(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
+    # sensor 第一次檢查的時間（UTC），用來判斷等了多久、有沒有逾時。
+    # 中途失敗重試也不清掉，所以重試不會把逾時的計時歸零；sensor 結束（成功或失敗）才清掉。
+    wait_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=func.now(), onupdate=func.now())

@@ -4,6 +4,7 @@ export type TaskStatus =
   | 'success'
   | 'failed'
   | 'retrying'
+  | 'waiting'
   | 'cancelled'
 
 export interface Task {
@@ -69,6 +70,7 @@ export const TASK_STATUSES: TaskStatus[] = [
   'retrying',
   'success',
   'failed',
+  'waiting',
   'cancelled',
 ]
 
