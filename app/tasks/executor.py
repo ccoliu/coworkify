@@ -370,6 +370,48 @@ def _cascade_cancel(db, all_steps: list[WorkflowStep], from_task_ids, reason: st
 
     return to_cancel_ids
 
+def _unexpanded_reduces_by_source(db, workflow_id, all_steps: list[WorkflowStep]) -> dict:
+    """
+    {for_each 來源的 task id: [等著它展開的 reduce 步驟]}，已經展開過的不算。
+
+    reduce 在展開之前 depends_on 是空的，從來源沿 depends_on 往下走不到它，
+    要知道它在等誰，只能透過 for_each 模板。
+    """
+    templates = db.scalars(
+        select(WorkflowStepTemplate).where(
+            WorkflowStepTemplate.workflow_id == workflow_id,
+            WorkflowStepTemplate.expanded == False,
+        )
+    ).all()
+    by_source: dict = {}
+    for template in templates:
+        reduces = [s for s in all_steps if s.reduce_of_key == template.key]
+        if reduces:
+            by_source.setdefault(template.for_each_task_id, []).extend(reduces)
+    return by_source
+
+def _cancel_reduces_of_cancelled_sources(db, workflow_id, all_step: list[WorkflowStep], reason: str) -> None:
+    """
+    for_each 來源被取消就永遠不會展開，等它的 reduce 也要一起取消，連同 reduce 的下游，
+    否則這些 task 會永遠停在 PENDING，workflow 也結束不了。
+
+    要重複到沒有新的為止：reduce 的下游可能是另一組 for_each 的來源。
+    """
+    by_source = _unexpanded_reduces_by_source(db, workflow_id, all_step)
+    changed = True
+    while changed:
+        changed = False
+        for source_id, reduces in by_source.items():
+            source = db.get(Task, source_id)
+            if not source or source.status != TaskStatus.CANCELLED:
+                continue
+            for step in reduces:
+                t = db.get(Task, step.task_id)
+                if t and t.status == TaskStatus.PENDING:
+                    t.status = TaskStatus.CANCELLED
+                    notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
+                    _cascade_cancel(db, all_step, [step.task_id], reason)
+                    changed = True
 
 def resolve_condition_left(db, step: WorkflowStep, payload: dict) -> dict:
     """
@@ -538,6 +580,7 @@ def advance_workflow(db, task: Task):
                             t.status = TaskStatus.CANCELLED
                             notify_status_change(str(t.id), TaskStatus.CANCELLED, None, reason)
                     _cascade_cancel(db, all_steps, [s.task_id for s in losing_steps], reason)
+                    _cancel_reduces_of_cancelled_sources(db, workflow.id, all_steps, reason)
                     db.commit()
 
         # 找出依賴這個 task、並且依賴已全部滿的下游step，派送出去
@@ -660,6 +703,22 @@ def retry_workflow_from_failure(db, workflow: Workflow) -> int:
     
     loser_downstream = _downstream_task_ids(all_steps, branch_losers) if branch_losers else set()
     to_reset = (set(failed_ids) | affected) - branch_losers - loser_downstream
+
+    # 上面把孤兒 reduce 全部收回來了，但來源如果是分支沒命中、這次不會重跑，
+    # 就永遠不會展開，收回來只會卡在 PENDING。要重複到沒有新的為止，理由同
+    # _cancel_reduces_of_cancelled_sources。
+    by_source = _unexpanded_reduces_by_source(db, workflow.id, all_steps)
+    changed = True
+    while changed:
+        changed = False
+        for source_id, reduces in by_source.items():
+            source = tasks_by_id.get(source_id)
+            if source_id in to_reset or not source or source.status != TaskStatus.CANCELLED:
+                continue
+            never_expanding = {s.task_id for s in reduces} & to_reset
+            if never_expanding:
+                to_reset -= never_expanding | _downstream_task_ids(all_steps, never_expanding)
+                changed = True
 
     for tid in to_reset:
         t = tasks_by_id.get(tid)

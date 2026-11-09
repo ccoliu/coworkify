@@ -314,3 +314,141 @@ def test_retry_does_not_revive_a_branch_that_lost(db, dispatched):
     assert run.status("yes") == TaskStatus.PENDING
     assert run.status("join") == TaskStatus.PENDING
     assert run.status("no") == TaskStatus.CANCELLED
+
+
+# --- fan-out 放在沒走到的分支 ------------------------------------------------
+
+def _branch_fan_out_steps():
+    return [
+        step("cond", "condition"),
+        step("yes", depends_on=["cond"], branch_of="cond", branch_when="true"),
+        step("src", "python", depends_on=["cond"], branch_of="cond", branch_when="false"),
+        step("judge", payload={"issue": "{{item}}"}, for_each="src"),
+        step("digest", "python", reduce_of="judge"),
+        step("after", depends_on=["digest"]),
+    ]
+
+
+def test_a_fan_out_on_the_losing_branch_cancels_its_reduce_and_downstream(db, dispatched):
+    run = start(db, _branch_fan_out_steps())
+
+    run.succeed("cond", {"passed": True})
+    assert run.status("src") == TaskStatus.CANCELLED
+    assert run.status("digest") == TaskStatus.CANCELLED
+    assert run.status("after") == TaskStatus.CANCELLED
+    assert run.task("digest").id not in dispatched
+
+    
+    run.succeed("yes", {})
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+def test_a_workflow_ending_on_a_losing_fan_out_finishes_with_the_condition(db, dispatched):
+    run = start(db, [
+        step("cond", "condition"),
+        step("src", "python", depends_on=["cond"], branch_of="cond", branch_when="false"),
+        step("judge", for_each="src"),
+        step("digest", "python", reduce_of="judge"),
+    ])
+
+    run.succeed("cond", {"passed": True})
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+def test_a_fan_out_further_down_the_losing_branch_is_cancelled_too(db, dispatched):
+    run = start(db, [
+        step("cond", "condition"),
+        step("no", depends_on=["cond"], branch_of="cond", branch_when="false"),
+        step("src", "python", depends_on=["no"]),
+        step("judge", for_each="src"),
+        step("digest", "python", reduce_of="judge"),
+    ])
+
+    run.succeed("cond", {"passed": True})
+    assert run.status("digest") == TaskStatus.CANCELLED
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+def _chained_fan_out_steps():
+    # 第二組寫在前面：取消第一個 reduce 之後，第二組才會符合條件，掃一輪不夠
+    return [
+        step("cond", "condition"),
+        step("yes", depends_on=["cond"], branch_of="cond", branch_when="true"),
+        step("second_src", "python", depends_on=["digest"]),
+        step("second", for_each="second_src"),
+        step("second_digest", "python", reduce_of="second"),
+        step("src", "python", depends_on=["cond"], branch_of="cond", branch_when="false"),
+        step("judge", for_each="src"),
+        step("digest", "python", reduce_of="judge"),
+    ]
+
+
+def test_chained_fan_outs_on_the_losing_branch_are_all_cancelled(db, dispatched):
+    run = start(db, _chained_fan_out_steps())
+
+    run.succeed("cond", {"passed": True})
+    assert run.status("second_src") == TaskStatus.CANCELLED
+    assert run.status("second_digest") == TaskStatus.CANCELLED
+
+    run.succeed("yes", {})
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+
+def test_a_fan_out_on_the_winning_branch_still_runs(db, dispatched):
+    run = start(db, _branch_fan_out_steps())
+
+    run.succeed("cond", {"passed": False})
+    assert run.status("yes") == TaskStatus.CANCELLED
+    assert run.status("digest") == TaskStatus.PENDING
+
+    run.succeed("src", py(["a"]))
+    (only,) = run.expanded("judge")
+    run.succeed(only, {"verdict": "a"})
+    assert dispatched[-1] == run.task("digest").id
+
+
+def test_retry_keeps_a_losing_fan_out_cancelled(db, dispatched):
+    run = start(db, _branch_fan_out_steps())
+    run.succeed("cond", {"passed": True})
+    run.fail("yes")
+    dispatched.clear()
+
+    assert retry_workflow_from_failure(db, run.workflow) == 1
+    assert run.status("yes") == TaskStatus.PENDING
+    assert run.status("digest") == TaskStatus.CANCELLED
+    assert run.status("after") == TaskStatus.CANCELLED
+    assert dispatched == [run.task("yes").id]
+
+    run.succeed("yes", {})
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+
+def test_retry_keeps_chained_losing_fan_outs_cancelled(db, dispatched):
+    run = start(db, _chained_fan_out_steps())
+    run.succeed("cond", {"passed": True})
+    run.fail("yes")
+
+    retry_workflow_from_failure(db, run.workflow)
+    assert run.status("digest") == TaskStatus.CANCELLED
+    assert run.status("second_src") == TaskStatus.CANCELLED
+    assert run.status("second_digest") == TaskStatus.CANCELLED
+
+    run.succeed("yes", {})
+    assert run.workflow_status() == WorkFlowStatus.SUCCESS
+
+
+def test_retry_before_the_condition_ran_revives_the_fan_out(db, dispatched):
+    # 這時候分支還沒判定，src 是被失敗連坐取消的，重跑之後要能走任一邊
+    steps = [step("a"), *_branch_fan_out_steps()]
+    steps[1] = step("cond", "condition", depends_on=["a"])
+    run = start(db, steps)
+    run.fail("a")
+    assert run.status("digest") == TaskStatus.CANCELLED
+
+    retry_workflow_from_failure(db, run.workflow)
+    assert run.status("src") == TaskStatus.PENDING
+    assert run.status("digest") == TaskStatus.PENDING
+
+    run.succeed("a", {})
+    run.succeed("cond", {"passed": False})
+    run.succeed("src", py(["a"]))
+    (only,) = run.expanded("judge")
+    run.succeed(only, {"verdict": "a"})
+    assert dispatched[-1] == run.task("digest").id
