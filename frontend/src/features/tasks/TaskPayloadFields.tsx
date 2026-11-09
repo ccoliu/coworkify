@@ -86,6 +86,14 @@ function CodeField({
   )
 }
 
+// 匯入或透過 API 建立的步驟，headers 這類欄位可能是物件而不是文字；
+// 直接 String() 會變成 [object Object]，使用者一改就把真正的內容蓋掉了
+function fieldText(value: unknown): string {
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value, null, 2)
+  return String(value ?? '')
+}
+
+
 export function TaskPayloadFields({ idPrefix, fields, payload, onChange }: Props) {
   const [uploadedNames, setUploadedNames] = useState<Record<string, string>>({})
 
@@ -161,14 +169,14 @@ export function TaskPayloadFields({ idPrefix, fields, payload, onChange }: Props
             ) : field.kind === 'code' ? (
               <CodeField
                 label={field.label}
-                value={String(value ?? '')}
+                value={fieldText(value)}
                 language={field.language}
                 onChange={(next) => onChange({ ...payload, [field.key]: next })}
               />
             ) : field.kind === 'text' ? (
               <Textarea
                 id={id}
-                value={String(value ?? '')}
+                value={fieldText(value)}
                 onChange={(e) => onChange({ ...payload, [field.key]: e.target.value })}
                 rows={6}
               />
@@ -176,7 +184,7 @@ export function TaskPayloadFields({ idPrefix, fields, payload, onChange }: Props
               <Input
                 id={id}
                 type={field.kind === 'number' ? 'number' : 'text'}
-                value={String(value ?? '')}
+                value={fieldText(value)}
                 onChange={(e) =>
                   onChange({
                     ...payload,
