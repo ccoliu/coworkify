@@ -17,6 +17,10 @@ import redis
 import json
 from sqlalchemy import select, update, and_, or_
 from app.models.workflow import Workflow, WorkflowStep, WorkFlowStatus, WorkflowStepTemplate
+from app.models.trigger import TriggerKind, WorkflowTrigger
+import logging
+
+logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL")
 redis_publisher = redis.Redis.from_url(REDIS_URL, decode_responses=True)
@@ -634,6 +638,7 @@ def advance_workflow(db, task: Task):
             workflow.status = WorkFlowStatus.SUCCESS
             workflow.result = _collect_workflow_output(db, all_steps)
             db.commit()
+            _enqueue_completion_triggers(db, workflow, WorkFlowStatus.SUCCESS)
 
     elif task.status == TaskStatus.FAILED:
         # 這個 task 失敗了：把所有下游(直接+間接依賴它的)step 取消掉，整條 workflow 標記失敗
@@ -655,6 +660,36 @@ def advance_workflow(db, task: Task):
 
         workflow.status = WorkFlowStatus.FAILED
         db.commit()
+        _enqueue_completion_triggers(db, workflow, WorkFlowStatus.FAILED)
+
+
+def _enqueue_completion_triggers(db, workflow: Workflow, status: str) -> None:
+    """
+    有 workflow 觸發器在等這條產線結束，才派 coworkify.fire_workflow_triggers 去啟動下游。
+    先查一次再派：絕大多數 run 沒有人在等，不必每次都丟一個空的 task。
+
+    用 send_task 按名稱派送，不 import app.tasks.triggers——那個模組要 import
+    這裡的 create_workflow_from_steps，直接 import 會循環。
+    """
+    if workflow.definition_id is None:
+        return
+    # WorkFlowStatus 是 str Enum，str() 會變成 "WorkFlowStatus.SUCCESS"，要取 .value
+    status = getattr(status, "value", status)
+    waiting = db.scalar(
+        select(WorkflowTrigger.id).where(
+            WorkflowTrigger.kind == TriggerKind.WORKFLOW,
+            WorkflowTrigger.enabled == True,  # noqa: E712
+            WorkflowTrigger.source_definition_id == workflow.definition_id,
+            WorkflowTrigger.on_status.in_([status, "any"]),
+        ).limit(1)
+    )
+    if waiting is None:
+        return
+    try:
+        celery_app.send_task("coworkify.fire_workflow_triggers", args=[str(workflow.id), status])
+    except Exception:
+        # 上游 run 已經確定結束了；派送失敗不能讓它的最後一個 task 跟著出錯
+        logger.exception("Couldn't enqueue workflow triggers for run %s", workflow.id)
 
 def retry_workflow_from_failure(db, workflow: Workflow) -> int:
     """

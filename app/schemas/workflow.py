@@ -230,6 +230,17 @@ class WorkflowStepResponse(BaseModel):
     task_name: Optional[str] = None
     task_type: Optional[str] = None
 
+class LinkedRun(BaseModel):
+    """workflow 觸發器串起來的另一個 run，給詳細頁顯示與連過去用。"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    status: str
+    created_at: datetime
+    # 這條串接是因為上游「成功」還是「失敗」才觸發的："success" / "failed"
+    via_status: Optional[str] = None
+
 class WorkflowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -250,3 +261,6 @@ class WorkflowResponse(BaseModel):
     # "schedule" / "webhook"；手動建立的是 None
     trigger_kind: Optional[str] = None
     trigger_id: Optional[UUID] = None
+    # 只有 GET /workflows/{id} 會填：被哪個上游 run 啟動、啟動了哪些下游 run
+    upstream_run: Optional[LinkedRun] = None
+    downstream_runs: List[LinkedRun] = []

@@ -23,7 +23,7 @@ celery_app = Celery(
     "coworkify",
     broker=REDIS_URL, # 任務佇列，傳遞任務
     backend=REDIS_URL, # 任務結果，儲存
-    include=["app.tasks.executor", "app.tasks.scheduler"] # 告訴 Celery 要自動載入的任務模組
+    include=["app.tasks.executor", "app.tasks.scheduler", "app.tasks.triggers"] # 告訴 Celery 要自動載入的任務模組
 )
 
 # advanced

@@ -82,7 +82,7 @@ class Workflow(Base):
     # 而且來源刪掉之後 run 的紀錄要留著。
     trigger_kind: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
     trigger_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, default=None)
-    trigger_delivery_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
+    trigger_delivery_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None, index=True)
 
 class WorkflowStep(Base):
     __tablename__ = "workflow_steps"

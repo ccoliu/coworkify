@@ -10,26 +10,21 @@ POST /hooks/{trigger_id}：外部系統（GitHub、自己的腳本）用 webhook
 - 200 {"status": "pong"}：GitHub 建立 webhook 時送的 ping
 - 204：filter 不符合，沒有建 run
 - 401：secret 或簽章不對
-- 404：觸發器不存在或停用
+- 404：觸發器不存在、停用，或不是 webhook 觸發器
 - 422：取出來的輸入不合定義的 input_schema（也會記在觸發器的 last_error）
 """
 import json
-from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.connection_crypto import decrypt
 from app.core.rate_limit import enforce_rate_limit
-from app.core.webhooks import extract_input, is_authorized, matches_filter
+from app.core.webhooks import is_authorized, matches_filter
 from app.db import get_db
-from app.models.trigger import WorkflowTrigger
-from app.models.workflow import Workflow, WorkflowDefinition
-from app.schemas.definition import resolve_run_input
-from app.tasks.executor import create_workflow_from_steps
+from app.models.trigger import TriggerKind, WorkflowTrigger
+from app.tasks.triggers import record_trigger_error, start_triggered_run
 
 router = APIRouter(prefix="/hooks", tags=["Webhooks"])
 
@@ -58,18 +53,6 @@ async def _rate_limit(trigger_id: UUID) -> None:
     await enforce_rate_limit(f"ratelimit:hook:{trigger_id}", RATE_LIMIT_TIMES, RATE_LIMIT_SECONDS)
 
 
-def _existing_run(db: Session, trigger_id: UUID, delivery_id: str) -> Workflow | None:
-    return db.scalars(
-        select(Workflow).where(Workflow.trigger_id == trigger_id, Workflow.trigger_delivery_id == delivery_id)
-    ).first()
-
-
-def _record_error(db: Session, trigger: WorkflowTrigger, message: str) -> None:
-    trigger.last_error = message
-    trigger.last_error_at = datetime.utcnow()
-    db.commit()
-
-
 @router.post("/{trigger_id}", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(_rate_limit)])
 def receive_hook(
     trigger_id: UUID,
@@ -83,7 +66,8 @@ def receive_hook(
     db: Session = Depends(get_db),
 ):
     trigger = db.get(WorkflowTrigger, trigger_id)
-    if trigger is None or not trigger.enabled:
+    # workflow 觸發器沒有 secret、也不該從外面打得到，當成不存在
+    if trigger is None or not trigger.enabled or trigger.kind != TriggerKind.WEBHOOK:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trigger not found")
 
     if not is_authorized(decrypt(trigger.encrypted_secret), body, authorization, x_hub_signature_256):
@@ -110,51 +94,13 @@ def receive_hook(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     delivery_id = (x_github_delivery or idempotency_key or "").strip()[:DELIVERY_ID_MAX] or None
-    if delivery_id:
-        existing = _existing_run(db, trigger.id, delivery_id)
-        if existing:
-            response.status_code = status.HTTP_200_OK
-            return {"workflow_id": str(existing.id), "duplicate": True}
-
-    definition = db.get(WorkflowDefinition, trigger.definition_id)
-    if definition.input_schema:
-        try:
-            run_input = resolve_run_input(definition.input_schema, extract_input(payload, trigger.input_mapping or {}))
-        except ValueError as exc:
-            _record_error(db, trigger, f"ValueError: {exc}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
-    else:
-        run_input = None
-
     try:
-        workflow = create_workflow_from_steps(
-            db,
-            definition.name,
-            definition.steps,
-            definition_id=definition.id,
-            definition_version=definition.version,
-            run_input=run_input,
-            created_by=trigger.created_by,
-            trigger_kind="webhook",
-            trigger_id=trigger.id,
-            trigger_delivery_id=delivery_id,
-        )
-    except IntegrityError:
-        # 同一個 delivery 的兩份請求同時通過了上面的檢查，unique constraint 擋下後到的那份
-        db.rollback()
-        existing = _existing_run(db, trigger.id, delivery_id) if delivery_id else None
-        if existing is None:
-            raise
-        response.status_code = status.HTTP_200_OK
-        return {"workflow_id": str(existing.id), "duplicate": True}
+        workflow, created = start_triggered_run(db, trigger, payload, delivery_id)
     except ValueError as exc:
-        # 定義本身有問題（例如 for_each 指向不存在的 step）
-        db.rollback()
-        _record_error(db, trigger, f"ValueError: {exc}")
+        record_trigger_error(db, trigger, f"ValueError: {exc}")
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
 
-    trigger.last_triggered_at = datetime.utcnow()
-    trigger.last_error = None
-    trigger.last_error_at = None
-    db.commit()
+    if not created:
+        response.status_code = status.HTTP_200_OK
+        return {"workflow_id": str(workflow.id), "duplicate": True}
     return {"workflow_id": str(workflow.id)}

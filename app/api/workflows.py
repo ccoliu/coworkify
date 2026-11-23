@@ -14,6 +14,7 @@ from app.models.schedule import WorkflowSchedule
 from app.schemas.workflow import WorkflowCreate, WorkflowResponse
 from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
 from app.tasks.executor import execute_task, create_workflow_from_steps, retry_workflow_from_failure
+from app.tasks.triggers import downstream_runs, upstream_run_id, upstream_outcome
 from app.core.security import get_current_user
 from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import RateLimiter
@@ -40,6 +41,18 @@ def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
             s.task_status = task.status
             s.task_name = task.name
             s.task_type = task.task_type
+
+def _attach_linked_runs(db: Session, workflow: Workflow, user: User) -> None:
+    """workflow 觸發器串起來的上下游 run。觸發器只接同一個人的 run，這裡再檢查一次擁有者。"""
+    parent_id = upstream_run_id(workflow)
+    parent = db.get(Workflow, parent_id) if parent_id else None
+    workflow.upstream_run = parent if parent is not None and parent.created_by == user.id else None
+    workflow.downstream_runs = [r for r in downstream_runs(db, workflow) if r.created_by == user.id]
+    # 畫布上兩個 run 之間的邊要標「on success / on failed」，結果記在下游 run 的 delivery id 上
+    if workflow.upstream_run is not None:
+        workflow.upstream_run.via_status = upstream_outcome(workflow)
+    for run in workflow.downstream_runs:
+        run.via_status = upstream_outcome(run)
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(
@@ -77,6 +90,7 @@ def get_workflow(
     workflow = _get_workflow_or_404(db, workflow_id, current_user)
 
     _attach_task_details(db, workflow.steps)
+    _attach_linked_runs(db, workflow, current_user)
     return workflow
 
 @router.post(
