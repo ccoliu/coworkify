@@ -21,11 +21,14 @@ import { TriggerFormModal } from '../features/triggers/TriggerFormModal'
 import { TriggerSecretModal } from '../features/triggers/TriggerSecretModal'
 
 function filterSummary(filter: Record<string, unknown>): string {
-    const parts = Object.entries(filter).map(([path, value]) =>
-        Array.isArray(value) ? `${path} ∈ ${JSON.stringify(value)}` : `${path} = ${JSON.stringify(value)}`,
-    )
-    return parts.length ? parts.join(', ') : 'every request'
+    return Object.entries(filter)
+        .map(([path, value]) =>
+            Array.isArray(value) ? `${path} ∈ ${JSON.stringify(value)}` : `${path} = ${JSON.stringify(value)}`,
+        )
+        .join(', ')
 }
+
+const ON_STATUS_TEXT = { success: 'succeeds', failed: 'fails', any: 'finishes' } as const
 
 export function Triggers() {
     const queryClient = useQueryClient()
@@ -76,6 +79,7 @@ export function Triggers() {
 
     async function copyUrl(trigger: WorkflowTrigger) {
         try {
+            if (!trigger.hook_path) return
             await navigator.clipboard.writeText(hookUrl(trigger.hook_path))
             push('Webhook URL copied', 'success')
         } catch {
@@ -89,8 +93,8 @@ export function Triggers() {
                 <div>
                     <h1 className="text-lg font-semibold text-ink">Triggers</h1>
                     <p className="text-sm text-ink-muted">
-                        Start a workflow when an outside system calls a webhook — GitHub, or your own script. Each trigger has
-                        its own secret, so no user login is needed.
+                        Start a workflow when an outside system calls a webhook — GitHub, or your own script — or when a run of
+                        another workflow finishes.
                     </p>
                 </div>
                 <Button variant="primary" onClick={() => setEditing('new')}>
@@ -108,7 +112,7 @@ export function Triggers() {
                 ) : !triggers?.length ? (
                     <EmptyState
                         title="No triggers yet"
-                        description="Create a webhook trigger to start a workflow from GitHub events or any HTTP call."
+                        description="Start a workflow from GitHub events or any HTTP call, or chain it after another workflow."
                     />
                 ) : (
                     <div className="overflow-x-auto">
@@ -128,21 +132,41 @@ export function Triggers() {
                                     <tr key={t.id} className="border-b border-border last:border-0 hover:bg-surface">
                                         <td className="px-4 py-3">
                                             <div className="font-medium text-ink">{t.name}</div>
-                                            <button
-                                                onClick={() => copyUrl(t)}
-                                                className="font-mono text-xs text-ink-muted hover:text-accent"
-                                                title="Copy webhook URL"
-                                            >
-                                                {t.hook_path}
-                                            </button>
+                                            {t.hook_path ? (
+                                                <button
+                                                    onClick={() => copyUrl(t)}
+                                                    className="font-mono text-xs text-ink-muted hover:text-accent"
+                                                    title="Copy webhook URL"
+                                                >
+                                                    {t.hook_path}
+                                                </button>
+                                            ) : (
+                                                <div className="text-xs text-ink-muted">after another workflow</div>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3">
                                             <Link to={`/definitions/${t.definition_id}`} className="text-ink hover:text-accent">
                                                 {definitionName(t.definition_id)}
                                             </Link>
                                         </td>
-                                        <td className="max-w-xs px-4 py-3 font-mono text-xs text-ink-secondary">
-                                            {filterSummary(t.filter)}
+                                        <td className="max-w-xs px-4 py-3 text-xs text-ink-secondary">
+                                            {t.kind === 'workflow' && t.source_definition_id ? (
+                                                <div>
+                                                    after{' '}
+                                                    <Link
+                                                        to={`/definitions/${t.source_definition_id}`}
+                                                        className="font-medium text-ink hover:text-accent"
+                                                    >
+                                                        {definitionName(t.source_definition_id)}
+                                                    </Link>{' '}
+                                                    {ON_STATUS_TEXT[t.on_status ?? 'success']}
+                                                </div>
+                                            ) : (
+                                                !Object.keys(t.filter).length && <div>every request</div>
+                                            )}
+                                            {Object.keys(t.filter).length > 0 && (
+                                                <div className="font-mono">{filterSummary(t.filter)}</div>
+                                            )}
                                         </td>
                                         <td className="px-4 py-3 text-ink-muted">
                                             {t.last_error ? (
@@ -169,6 +193,7 @@ export function Triggers() {
                                                 <Button variant="ghost" onClick={() => setEditing(t)}>
                                                     Edit
                                                 </Button>
+                                                {t.kind === 'webhook' && (
                                                 <Button
                                                     variant="ghost"
                                                     disabled={rotateMutation.isPending}
@@ -184,6 +209,7 @@ export function Triggers() {
                                                 >
                                                     Rotate secret
                                                 </Button>
+                                                )}
                                                 <Button
                                                     variant="ghost"
                                                     className="text-status-critical hover:text-status-critical"
@@ -212,7 +238,11 @@ export function Triggers() {
                     onClose={() => setEditing(null)}
                     onCreated={(created) => {
                         setEditing(null)
-                        setRevealed(created)
+                        if (created.secret) {
+                            setRevealed(created)
+                        } else {
+                            push('Trigger created', 'success')
+                        }
                     }}
                 />
             )}

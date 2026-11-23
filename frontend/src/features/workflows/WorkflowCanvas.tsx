@@ -10,8 +10,9 @@ import {
     type Edge,
 } from '@xyflow/react'
 import { useEffect } from 'react'
-import type { TaskStatus, WorkflowStep } from '../../lib/types'
-import { buildWorkflowGraph, type StepNode, type StepNodeData } from './graphModel'
+import { useNavigate } from 'react-router-dom'
+import type { LinkedRun, TaskStatus, WorkflowStep } from '../../lib/types'
+import { buildWorkflowGraph, type CanvasNode } from './graphModel'
 import { workflowNodeTypes } from './WorkflowNodes'
 import { CanvasBackground } from './CanvasBackground'
 
@@ -29,35 +30,43 @@ interface Props {
     steps: WorkflowStep[]
     selectedTaskId: string | null
     onSelect: (taskId: string | null) => void
+    // workflow 觸發器串起來的上下游 run，畫在兩側
+    upstreamRun?: LinkedRun | null
+    downstreamRuns?: LinkedRun[]
 }
 
-export function WorkflowCanvas({ steps, selectedTaskId, onSelect }: Props) {
-    const [nodes, setNodes, onNodesChange] = useNodesState<StepNode>([])
+export function WorkflowCanvas({ steps, selectedTaskId, onSelect, upstreamRun, downstreamRuns }: Props) {
+    const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
     const { theme } = useTheme()
+    const navigate = useNavigate()
 
     // steps 每次 refetch 都是新物件，所以這裡會重算——但 dagre 對同一組 DAG 是
     // 決定性的，只有狀態變的時候節點不會位移。選取狀態也一起重建，免得 refetch
     // 把高亮洗掉。
 
     useEffect(() => {
-        const graph = buildWorkflowGraph(steps)
+        const graph = buildWorkflowGraph(steps, { upstream: upstreamRun, downstream: downstreamRuns })
         setNodes(
             graph.nodes.map((n) =>
-                n.id === selectedTaskId ? { ...n, data: { ...n.data, selected: true } } : n,
+                n.type !== 'run' && n.id === selectedTaskId ? { ...n, data: { ...n.data, selected: true } } : n,
             ),
         )
         setEdges(graph.edges)
-    }, [steps, selectedTaskId, setNodes, setEdges])
+    }, [steps, upstreamRun, downstreamRuns, selectedTaskId, setNodes, setEdges])
 
     return (
-        <ReactFlow<StepNode>
+        <ReactFlow<CanvasNode>
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             nodeTypes={workflowNodeTypes}
-            onNodeClick={(_, node) => onSelect(node.id)}
+            onNodeClick={(_, node) => {
+                // 上下游 run 的節點：跳到那個 run；其他是這個 run 自己的步驟，打開詳細面板
+                if (node.type === 'run') navigate(`/workflows/${node.data.runId}`)
+                else onSelect(node.id)
+            }}
             onPaneClick={() => onSelect(null)}
             colorMode={theme}
             style={{ backgroundColor: 'var(--color-canvas)' }}
@@ -79,7 +88,7 @@ export function WorkflowCanvas({ steps, selectedTaskId, onSelect }: Props) {
                 zoomable
                 style={{ backgroundColor: 'var(--color-surface)' }}
                 maskColor="color-mix(in srgb, var(--color-plane) 70%, transparent)"
-                nodeColor={(n) => MINIMAP_COLOR[(n.data as StepNodeData).status ?? 'pending']}
+                nodeColor={(n) => MINIMAP_COLOR[(n.data as { status: TaskStatus | null }).status ?? 'pending']}
             />
         </ReactFlow>
     )

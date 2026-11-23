@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps, type NodeTypes } from '@xyflow/react'
 import clsx from 'clsx'
 import { StatusBadge } from '../../components/StatusBadge'
 import type { TaskStatus } from '../../lib/types'
-import { NODE_WIDTH, type StepNode, type StepNodeData } from './graphModel'
+import { NODE_WIDTH, type RunNode, type StepNode, type StepNodeData } from './graphModel'
 import { getIcon } from '../../components/Icon'
 
 const STATUS_BORDER: Record<TaskStatus, string> = {
@@ -69,8 +69,16 @@ export function TaskNode({ data }: NodeProps<StepNode>) {
             <div className="flex items-center gap-1.5">
                 {getIcon(data.taskType)}
             </div>
-            {/* input 是 workflow 的資料入口，沒有上游，不畫接點 */}
-            {data.taskType !== 'input' && (
+            {/* input 是 workflow 的資料入口，不能接其他步驟；接點隱藏起來，
+                只給 run 詳細頁「上游 run → input」那條虛線用 */}
+            {data.taskType === 'input' ? (
+                <Handle
+                    type="target"
+                    position={Position.Left}
+                    isConnectable={false}
+                    style={{ ...HANDLE_STYLE, opacity: 0, pointerEvents: 'none' }}
+                />
+            ) : (
                 <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
             )}
             <NodeHeader data={data} />
@@ -131,8 +139,34 @@ export function ConditionNode({ data, isConnectable }: NodeProps<StepNode>) {
     )
 }
 
+/** 另一個 run：虛線框，點了跳到那個 run（點擊在 WorkflowCanvas 處理）。 */
+export function LinkedRunNode({ data }: NodeProps<RunNode>) {
+    const upstream = data.direction === 'upstream'
+    return (
+        <div
+            style={{ width: NODE_WIDTH }}
+            title={`Open ${data.label}`}
+            className="cursor-pointer rounded-lg border border-dashed border-ink-muted bg-plane px-3 py-2.5 transition-colors hover:border-accent"
+        >
+            {!upstream && <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />}
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-muted">
+                <span>{upstream ? 'Started by' : 'Started'}</span>
+                <span aria-hidden>↗</span>
+            </div>
+            <div className="mt-0.5 truncate text-sm font-medium text-ink" title={data.label}>
+                {data.label}
+            </div>
+            <div className="mt-1">
+                <StatusBadge status={data.status} />
+            </div>
+            {upstream && <Handle type="source" position={Position.Right} style={HANDLE_STYLE} />}
+        </div>
+    )
+}
+
 // nodeTypes 一定要是模組層級常數，每次 render 產生新物件 React Flow 會整組重掛。
 export const workflowNodeTypes = {
     task: TaskNode,
     condition: ConditionNode,
+    run: LinkedRunNode,
 } satisfies NodeTypes

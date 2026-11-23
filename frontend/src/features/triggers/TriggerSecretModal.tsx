@@ -39,8 +39,9 @@ function CopyRow({ label, value, secret }: { label: string; value: string; secre
  * 建立或換 secret 之後顯示一次。關掉就再也拿不到——API 只存加密後的值、不會再回傳。
  */
 export function TriggerSecretModal({ trigger, onClose }: { trigger: WorkflowTriggerWithSecret; onClose: () => void }) {
-    const url = hookUrl(trigger.hook_path)
-    const curl = `curl -X POST '${url}' \\\n  -H 'Authorization: Bearer ${trigger.secret}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"action": "opened"}'`
+    const url = hookUrl(trigger.hook_path ?? '')
+    const secret = trigger.secret ?? ''
+    const curl = `curl -X POST '${url}' \\\n  -H 'Authorization: Bearer ${secret}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"action": "opened"}'`
 
     return (
         <Modal
@@ -58,7 +59,7 @@ export function TriggerSecretModal({ trigger, onClose }: { trigger: WorkflowTrig
                 </p>
 
                 <CopyRow label="Webhook URL" value={url} />
-                <CopyRow label="Secret" value={trigger.secret} secret />
+                <CopyRow label="Secret" value={secret} secret />
 
                 <div className="flex flex-col gap-2 border-t border-border pt-4 text-sm text-ink-secondary">
                     <p className="font-medium text-ink">GitHub</p>

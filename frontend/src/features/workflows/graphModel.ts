@@ -1,7 +1,7 @@
 import dagre from "@dagrejs/dagre";
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import { shortId } from "../../lib/format";
-import type { TaskStatus, WorkflowStep } from "../../lib/types";
+import type { LinkedRun, TaskStatus, WorkflowStatus, WorkflowStep } from "../../lib/types";
 import type { StepDraft } from "./WorkflowStepsEditor";
 
 export const NODE_WIDTH = 216;
@@ -21,6 +21,23 @@ export type StepNodeData = {
 }
 
 export type StepNode = Node<StepNodeData, 'task' | 'condition'>
+
+// workflow 觸發器串起來的另一個 run：畫在最左（上游）或最右（下游），點了跳過去
+export type RunNodeData = {
+    runId: string
+    label: string
+    status: WorkflowStatus
+    direction: 'upstream' | 'downstream'
+}
+
+export type RunNode = Node<RunNodeData, 'run'>
+
+export type CanvasNode = StepNode | RunNode
+
+export interface LinkedRuns {
+    upstream?: LinkedRun | null
+    downstream?: LinkedRun[]
+}
 
 /**
  * 畫布用的中性 step 表示法。run view（WorkflowStep，id 是 task_id）與 Phase 2 的
@@ -197,7 +214,7 @@ export function toFlow(steps: GraphStep[]): { nodes: StepNode[]; edges: Edge[] }
 }
 
 /** dagre 由左至右排版。同一組 DAG 結果是穩定的，所以狀態更新重算不會讓節點亂跳。 */
-export function autoLayout(nodes: StepNode[], edges: Edge[]): StepNode[] {
+export function autoLayout<N extends Node>(nodes: N[], edges: Edge[]): N[] {
     const g = new dagre.graphlib.Graph()
     g.setDefaultEdgeLabel(() => ({}))
     g.setGraph({ rankdir: 'LR', nodesep: 32, ranksep: 88, marginx: 16, marginy: 16 })
@@ -213,7 +230,72 @@ export function autoLayout(nodes: StepNode[], edges: Edge[]): StepNode[] {
     })
 }
 
-export function buildWorkflowGraph(steps: WorkflowStep[]): { nodes: StepNode[]; edges: Edge[] } {
-    const { nodes, edges } = toFlow(stepsFromWorkflow(steps))
+const UPSTREAM_NODE_ID = 'run:upstream'
+
+function runEdge(id: string, source: string, target: string, viaStatus: string | null, sourceHandle?: string): Edge {
+    return {
+        id,
+        source,
+        target,
+        sourceHandle,
+        type: 'smoothstep',
+        label: viaStatus ? `on ${viaStatus}` : 'triggered',
+        data: { kind: 'trigger' },
+        deletable: false,
+        // 跨 run 的邊用虛線，跟 run 內部的依賴分開
+        style: { stroke: EDGE_COLOR_MUTED, strokeWidth: 1.5, strokeDasharray: '6 4' },
+        labelStyle: { fill: 'var(--color-ink-muted)', fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: 'var(--color-surface)' },
+        labelBgPadding: [4, 2],
+        labelBgBorderRadius: 4,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: EDGE_COLOR_MUTED },
+    }
+}
+
+/**
+ * 上游 run 接到這個 run 的起點步驟（沒有上游依賴的）；終點步驟（沒有人依賴的）接到每個下游 run。
+ * 終點步驟優先挑沒被取消的——分支沒走到的那一邊不是真正收尾的地方。
+ */
+function addLinkedRuns(steps: GraphStep[], links: LinkedRuns, nodes: CanvasNode[], edges: Edge[]) {
+    const runNode = (id: string, run: LinkedRun, direction: RunNodeData['direction']): RunNode => ({
+        id,
+        type: 'run',
+        position: { x: 0, y: 0 },
+        data: { runId: run.id, label: run.name, status: run.status, direction },
+    })
+
+    if (links.upstream) {
+        nodes.push(runNode(UPSTREAM_NODE_ID, links.upstream, 'upstream'))
+        for (const step of steps.filter((s) => s.dependsOn.length === 0)) {
+            edges.push(runEdge(`${UPSTREAM_NODE_ID}->${step.id}`, UPSTREAM_NODE_ID, step.id, links.upstream.via_status))
+        }
+    }
+
+    const downstream = links.downstream ?? []
+    if (downstream.length === 0) return
+    const dependedOn = new Set(steps.flatMap((s) => s.dependsOn))
+    const terminal = steps.filter((s) => !dependedOn.has(s.id))
+    const finishing = terminal.filter((s) => s.status !== 'cancelled')
+    const ends = finishing.length > 0 ? finishing : terminal
+    for (const run of downstream) {
+        const id = `run:${run.id}`
+        nodes.push(runNode(id, run, 'downstream'))
+        for (const step of ends) {
+            // condition 節點的一般輸出是具名的 out
+            const handle = step.taskType === 'condition' ? 'out' : undefined
+            edges.push(runEdge(`${step.id}->${id}`, step.id, id, run.via_status, handle))
+        }
+    }
+}
+
+export function buildWorkflowGraph(
+    steps: WorkflowStep[],
+    links: LinkedRuns = {},
+): { nodes: CanvasNode[]; edges: Edge[] } {
+    const graphSteps = stepsFromWorkflow(steps)
+    const flow = toFlow(graphSteps)
+    const nodes: CanvasNode[] = [...flow.nodes]
+    const edges = [...flow.edges]
+    addLinkedRuns(graphSteps, links, nodes, edges)
     return { nodes: autoLayout(nodes, edges), edges }
 }

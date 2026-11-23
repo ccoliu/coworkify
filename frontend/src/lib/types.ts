@@ -127,8 +127,19 @@ export interface Workflow {
   // 這次 run 經 input_schema 檢查、補完預設值後的輸入
   input: Record<string, unknown> | null
   // 怎麼開始的；手動建立與舊資料是 null
-  trigger_kind?: 'schedule' | 'webhook' | null
+  trigger_kind?: 'schedule' | 'webhook' | 'workflow' | null
   trigger_id?: string | null
+  upstream_run?: LinkedRun | null
+  downstream_runs?: LinkedRun[]
+}
+
+export interface LinkedRun {
+  id: string
+  name: string
+  status: WorkflowStatus
+  created_at: string
+  // 上游以什麼結果結束才觸發這條串接
+  via_status: 'success' | 'failed' | null
 }
 
 export interface WorkflowStepCreate {
@@ -250,14 +261,24 @@ export interface ConnectionUpdate {
   description?: string | null
 }
 
-// webhook 觸發器；secret 只在建立與換新時出現在 WorkflowTriggerWithSecret
+export type TriggerKind = 'webhook' | 'workflow'
+export type TriggerOnStatus = 'success' | 'failed' | 'any'
+
+// 觸發器：webhook（外部打 /hooks/<id>）或 workflow（另一條產線的 run 結束時）。
+// webhook 的 secret 只在建立與換新時出現在 WorkflowTriggerWithSecret
 export interface WorkflowTrigger {
   id: string
   name: string
+  kind: TriggerKind
+  // 要啟動的產線
   definition_id: string
-  // run 輸入欄位 → body 路徑，例如 { repo: 'repository.full_name' }
+  // workflow 觸發器才有：看哪條產線的 run、什麼結果
+  source_definition_id: string | null
+  on_status: TriggerOnStatus | null
+  // run 輸入欄位 → 路徑。webhook 對 request body 取值，例如 { repo: 'repository.full_name' }；
+  // workflow 對 { workflow_id, status, result, input } 取值，例如 { summary: 'result.summarize' }
   input_mapping: Record<string, string>
-  // body 路徑 → 期望值；陣列代表「其中之一」
+  // 路徑 → 期望值；陣列代表「其中之一」
   filter: Record<string, unknown>
   enabled: boolean
   last_triggered_at: string | null
@@ -265,17 +286,21 @@ export interface WorkflowTrigger {
   last_error_at: string | null
   created_at: string
   updated_at: string
-  // 例如 /hooks/<id>，前面接 API 的網址
-  hook_path: string
+  // webhook 才有，例如 /hooks/<id>，前面接 API 的網址
+  hook_path: string | null
 }
 
 export interface WorkflowTriggerWithSecret extends WorkflowTrigger {
-  secret: string
+  // workflow 觸發器沒有 secret
+  secret: string | null
 }
 
 export interface WorkflowTriggerCreate {
   name: string
+  kind: TriggerKind
   definition_id: string
+  source_definition_id?: string | null
+  on_status?: TriggerOnStatus
   input_mapping: Record<string, string>
   filter: Record<string, unknown>
   enabled?: boolean
@@ -285,5 +310,6 @@ export interface WorkflowTriggerUpdate {
   name?: string
   input_mapping?: Record<string, string>
   filter?: Record<string, unknown>
+  on_status?: TriggerOnStatus
   enabled?: boolean
 }

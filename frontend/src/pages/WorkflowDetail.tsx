@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, deleteWorkflow, getWorkflow, rerunWorkflow, retryWorkflow } from '../lib/apiClient'
 import { formatDateTime } from '../lib/format'
@@ -25,6 +25,14 @@ export function WorkflowDetail() {
     const navigate = useNavigate()
     const { push } = useToast()
     const { events, status: wsStatus } = useWs()
+    // run 結束後，workflow 觸發器還要一下子才會建出下游 run。看到「執行中 → 結束」之後
+    // 多抓幾秒，讓畫布右邊的下游節點自己出現，不必手動重新整理。
+    const sawPendingRef = useRef(false)
+    const finishedAtRef = useRef<number | null>(null)
+    useEffect(() => {
+        sawPendingRef.current = false
+        finishedAtRef.current = null
+    }, [id])
 
     const rerun = useMutation({
         mutationFn: rerunWorkflow,
@@ -74,8 +82,13 @@ export function WorkflowDetail() {
         // WS 推的是 task 事件，workflow 本身的 status 是 worker 在最後一個 task 收尾時
         // 才寫進 DB 的，可能比事件晚一點到，所以執行中仍留一個慢速輪詢當保險。
         refetchInterval: (query) => {
-            if (query.state.data?.status !== 'pending') return false
-            return wsStatus === 'open' ? 5000 : 1500
+            if (query.state.data?.status === 'pending') {
+                sawPendingRef.current = true
+                return wsStatus === 'open' ? 5000 : 1500
+            }
+            if (!sawPendingRef.current) return false
+            finishedAtRef.current ??= Date.now()
+            return Date.now() - finishedAtRef.current < 10_000 ? 2000 : false
         },
     })
 
@@ -130,10 +143,20 @@ export function WorkflowDetail() {
                     <div className="mt-1 flex items-center gap-3">
                         <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
                         <StatusBadge status={workflow.status} />
-                        {workflow.trigger_kind && (
-                            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted">
-                                {workflow.trigger_kind === 'webhook' ? 'via webhook' : 'via schedule'}
-                            </span>
+                        {workflow.upstream_run ? (
+                            <Link
+                                to={`/workflows/${workflow.upstream_run.id}`}
+                                title="Started when this run finished"
+                                className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted hover:border-accent hover:text-accent"
+                            >
+                                via {workflow.upstream_run.name} ↗
+                            </Link>
+                        ) : (
+                            workflow.trigger_kind && (
+                                <span className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted">
+                                    via {workflow.trigger_kind}
+                                </span>
+                            )
                         )}
                     </div>
                     <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
@@ -209,9 +232,13 @@ export function WorkflowDetail() {
                 <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">
                     <div className="h-[380px] min-w-0 flex-1 lg:h-auto">
                         <WorkflowCanvas
+                            // 從上下游節點跳到另一個 run 時，這個頁面元件不會重掛；換 key 讓畫布重新 fitView
+                            key={workflow.id}
                             steps={workflow.steps}
                             selectedTaskId={selectedTaskId}
                             onSelect={setSelectedTaskId}
+                            upstreamRun={workflow.upstream_run}
+                            downstreamRuns={workflow.downstream_runs}
                         />
                     </div>
                     {selectedStep && (
