@@ -17,7 +17,7 @@ def _trigger(db, sched: WorkflowSchedule, now: datetime) -> None:
         # 舊排程：自己帶著一份 step 快照，沒有定義可以指
         create_workflow_from_steps(
             db, f"{sched.name} @ {now.strftime('%Y-%m-%d %H:%M:%S')}", sched.steps or [],
-            created_by=sched.created_by,
+            created_by=sched.created_by, trigger_kind="schedule", trigger_id=sched.id,
         )
         return
     
@@ -40,6 +40,8 @@ def _trigger(db, sched: WorkflowSchedule, now: datetime) -> None:
         definition_version=definition.version,
         run_input=run_input,
         created_by=sched.created_by,
+        trigger_kind="schedule",
+        trigger_id=sched.id,
     )
 
 @celery_app.task(name="coworkify.check_due_schedules")

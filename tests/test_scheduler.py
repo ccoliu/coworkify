@@ -115,3 +115,13 @@ def test_schedules_that_are_not_due_or_disabled_are_left_alone(db):
     assert run_due_schedules(db, NOW) == 0
     assert runs_of(db, future) == []
     assert runs_of(db, disabled) == []
+
+
+def test_a_scheduled_run_records_which_schedule_started_it(db):
+    sched = make_schedule(db, input={"repo": "apache/airflow"})
+
+    run_due_schedules(db, NOW)
+
+    [run] = runs_of(db, sched)
+    assert run.trigger_kind == "schedule"
+    assert run.trigger_id == sched.id

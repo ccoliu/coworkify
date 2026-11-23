@@ -759,6 +759,9 @@ def create_workflow_from_steps(db,
     definition_version: int | None = None,
     run_input: dict | None = None,
     created_by=None,
+    trigger_kind: str | None = None,
+    trigger_id=None,
+    trigger_delivery_id: str | None = None,
 ) -> Workflow:
     """建立 workflow + 派送根節點；供 API 與排程共用"""
     # 存一份原始樣板，讓這個 workflow 之後可以直接被「升級成排程」
@@ -771,6 +774,9 @@ def create_workflow_from_steps(db,
         definition_version=definition_version,
         input=run_input,
         created_by=created_by,
+        trigger_kind=trigger_kind,
+        trigger_id=trigger_id,
+        trigger_delivery_id=trigger_delivery_id,
     )
     db.add(workflow)
     db.flush()

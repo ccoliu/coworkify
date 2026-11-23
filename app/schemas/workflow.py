@@ -247,3 +247,6 @@ class WorkflowResponse(BaseModel):
     definition_id: Optional[UUID] = None
     definition_version: Optional[int] = None
     input: Optional[Dict[str, Any]] = None
+    # "schedule" / "webhook"；手動建立的是 None
+    trigger_kind: Optional[str] = None
+    trigger_id: Optional[UUID] = None

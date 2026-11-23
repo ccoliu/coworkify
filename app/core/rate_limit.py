@@ -14,6 +14,32 @@ load_dotenv(BASE_DIR / ".env")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
+async def enforce_rate_limit(rate_key: str, times: int, seconds: int) -> None:
+    """滑動視窗限流：rate_key 在最近 seconds 秒內超過 times 次就丟 429。"""
+    now = time.time()
+    window_start = now - seconds
+    req_id = str(uuid.uuid4())
+
+    # Redis Pipelining 批次執行
+    pipe = redis_client.pipeline()
+    pipe.zremrangebyscore(rate_key, 0, window_start) # 移除視窗外的舊請求
+    pipe.zcard(rate_key) # 計算當前請求次數
+    _, current_requests = await pipe.execute()
+
+    if current_requests >= times:
+        retry_after = int(seconds)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too Many Request. Try again in {retry_after}s.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    pipe = redis_client.pipeline()
+    pipe.zadd(rate_key, {req_id: now})
+    pipe.expire(rate_key, seconds * 2) # 到期自動刪除
+    await pipe.execute()
+
+
 class RateLimiter:
     def __init__(self, times: int = 5, seconds: int = 10):
         """
@@ -25,31 +51,4 @@ class RateLimiter:
         self.seconds = seconds
 
     async def __call__(self, request: Request, current_user: User = Depends(get_current_user)):
-        # 優先以 API Key 作為識別對象，若無則使用 Client IP
-        rate_key = f"ratelimit:{current_user.id}:{request.url.path}"
-
-        now = time.time()
-        window_start = now - self.seconds
-        req_id = str(uuid.uuid4())
-
-        # Redis Pipelining 批次執行
-        pipe = redis_client.pipeline()
-        pipe.zremrangebyscore(rate_key, 0, window_start) # 移除視窗外的舊請求
-        pipe.zcard(rate_key) # 計算當前請求次數
-        _, current_requests = await pipe.execute()
-
-        if current_requests >= self.times:
-            retry_after = int(self.seconds)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Too Many Request. Try again in {retry_after}s.",
-                headers={"Retry-After": str(retry_after)},
-            )
-
-        pipe = redis_client.pipeline()
-        pipe.zadd(rate_key, {req_id: now})
-        pipe.expire(rate_key, self.seconds * 2) # 到期自動刪除
-        await pipe.execute()
-
-        return
-    
+        await enforce_rate_limit(f"ratelimit:{current_user.id}:{request.url.path}", self.times, self.seconds)

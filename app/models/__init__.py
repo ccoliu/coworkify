@@ -5,6 +5,7 @@ from app.models.workflow import Workflow, WorkflowStep, WorkflowStepTemplate, Wo
 from app.models.user import User
 from app.models.schedule import WorkflowSchedule
 from app.models.connection import Connection
+from app.models.trigger import WorkflowTrigger
 
 __all__ = [
     "Task",
@@ -17,4 +18,5 @@ __all__ = [
     "WorkflowSchedule",
     "WorkflowDefinition",
     "Connection",
+    "WorkflowTrigger",
 ]

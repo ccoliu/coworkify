@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, List, Optional
 from enum import Enum
-from sqlalchemy import UUID, String, Text, DateTime, JSON, ForeignKey, Integer, Boolean, func
+from sqlalchemy import UUID, String, UniqueConstraint, Text, DateTime, JSON, ForeignKey, Integer, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
@@ -39,6 +39,10 @@ class WorkflowDefinition(Base):
 
 class Workflow(Base):
     __tablename__ = "workflows"
+
+    __table_args__ = (
+        UniqueConstraint("trigger_id", "trigger_delivery_id", name="uq_workflows_trigger_delivery"),
+    )
     
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4
@@ -73,6 +77,12 @@ class Workflow(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
+    # 這次 run 怎麼開始的："schedule" / "webhook"；手動建立與舊資料是 None。
+    # trigger_id 是排程或觸發器的 id，刻意不設 FK：兩種來源在不同的表，
+    # 而且來源刪掉之後 run 的紀錄要留著。
+    trigger_kind: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
+    trigger_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True, default=None)
+    trigger_delivery_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
 
 class WorkflowStep(Base):
     __tablename__ = "workflow_steps"
