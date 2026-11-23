@@ -126,6 +126,9 @@ export interface Workflow {
   definition_version: number | null
   // 這次 run 經 input_schema 檢查、補完預設值後的輸入
   input: Record<string, unknown> | null
+  // 怎麼開始的；手動建立與舊資料是 null
+  trigger_kind?: 'schedule' | 'webhook' | null
+  trigger_id?: string | null
 }
 
 export interface WorkflowStepCreate {
@@ -245,4 +248,42 @@ export interface ConnectionCreate {
 export interface ConnectionUpdate {
   value?: string
   description?: string | null
+}
+
+// webhook 觸發器；secret 只在建立與換新時出現在 WorkflowTriggerWithSecret
+export interface WorkflowTrigger {
+  id: string
+  name: string
+  definition_id: string
+  // run 輸入欄位 → body 路徑，例如 { repo: 'repository.full_name' }
+  input_mapping: Record<string, string>
+  // body 路徑 → 期望值；陣列代表「其中之一」
+  filter: Record<string, unknown>
+  enabled: boolean
+  last_triggered_at: string | null
+  last_error: string | null
+  last_error_at: string | null
+  created_at: string
+  updated_at: string
+  // 例如 /hooks/<id>，前面接 API 的網址
+  hook_path: string
+}
+
+export interface WorkflowTriggerWithSecret extends WorkflowTrigger {
+  secret: string
+}
+
+export interface WorkflowTriggerCreate {
+  name: string
+  definition_id: string
+  input_mapping: Record<string, string>
+  filter: Record<string, unknown>
+  enabled?: boolean
+}
+
+export interface WorkflowTriggerUpdate {
+  name?: string
+  input_mapping?: Record<string, string>
+  filter?: Record<string, unknown>
+  enabled?: boolean
 }

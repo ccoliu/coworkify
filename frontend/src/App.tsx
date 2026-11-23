@@ -12,6 +12,7 @@ import { WorkflowDetail } from './pages/WorkflowDetail'
 import { Workflows } from './pages/Workflows'
 import { Schedules } from './pages/Schedules'
 import { Connections } from './pages/Connections'
+import { Triggers } from './pages/Triggers'
 import { WorkflowBuilder } from './pages/WorkflowBuilder'
 import { DefinitionDetail } from './pages/DefinitionDetail'
 import { EditDefinition } from './pages/EditDefinition'
@@ -46,6 +47,7 @@ export function App() {
         <Route path="/workflows/:id" element={<WorkflowDetail />} />
         <Route path="/workflows/new" element={<WorkflowBuilder />} />
         <Route path="/schedules" element={<Schedules />} />
+        <Route path="/triggers" element={<Triggers />} />
         <Route path="/definitions/:id" element={<DefinitionDetail />} />
         <Route path="/definitions/:id/edit" element={<EditDefinition />} />
         <Route path='/connections' element={<Connections />} />

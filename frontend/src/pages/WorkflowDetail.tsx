@@ -130,6 +130,11 @@ export function WorkflowDetail() {
                     <div className="mt-1 flex items-center gap-3">
                         <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
                         <StatusBadge status={workflow.status} />
+                        {workflow.trigger_kind && (
+                            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted">
+                                {workflow.trigger_kind === 'webhook' ? 'via webhook' : 'via schedule'}
+                            </span>
+                        )}
                     </div>
                     <div className="mt-1 font-mono text-xs text-ink-muted">{workflow.id}</div>
                 </div>

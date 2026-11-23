@@ -17,7 +17,11 @@ import type {
   WorkflowScheduleCreate,
   WorkflowScheduleUpdate,
   WorkflowDefinition,
-  WorkflowDefinitionCreate
+  WorkflowDefinitionCreate,
+  WorkflowTrigger,
+  WorkflowTriggerCreate,
+  WorkflowTriggerUpdate,
+  WorkflowTriggerWithSecret,
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
@@ -231,4 +235,30 @@ export function updateConnection(id: string, patch: ConnectionUpdate): Promise<C
 
 export function deleteConnection(id: string): Promise<void> {
   return request(`/connections/${id}`, { method: 'DELETE' })
+}
+
+export function listTriggers(): Promise<WorkflowTrigger[]> {
+  return request('/triggers/')
+}
+
+export function createTrigger(body: WorkflowTriggerCreate): Promise<WorkflowTriggerWithSecret> {
+  return request('/triggers/', { method: 'POST', body: JSON.stringify(body) })
+}
+
+export function updateTrigger(id: string, patch: WorkflowTriggerUpdate): Promise<WorkflowTrigger> {
+  return request(`/triggers/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+}
+
+export function rotateTriggerSecret(id: string): Promise<WorkflowTriggerWithSecret> {
+  return request(`/triggers/${id}/rotate-secret`, { method: 'POST' })
+}
+
+export function deleteTrigger(id: string): Promise<void> {
+  return request(`/triggers/${id}`, { method: 'DELETE' })
+}
+
+/** webhook 的完整網址。BASE_URL 是相對路徑（dev 的 /api proxy）時，接上目前的網域。 */
+export function hookUrl(hookPath: string): string {
+  const base = BASE_URL.startsWith('http') ? BASE_URL : `${window.location.origin}${BASE_URL}`
+  return `${base.replace(/\/$/, '')}${hookPath}`
 }
