@@ -96,6 +96,7 @@ export function validateGraph(steps: StepDraft[]): StepIssue[] {
 
         if (!step.name.trim()) add(step.uid, '名稱不可空白')
         if (!step.taskType) add(step.uid, '沒有選 task type')
+        if (step.taskType === 'subworkflow' && !step.payload.definition_id) add(step.uid, '沒有選要執行的 workflow')
         if (!STEP_KEY_RE.test(step.key)) add(step.uid, `Step key「${step.key}」只能用英數字與底線`)
         else if ((keyCount.get(step.key) ?? 0) > 1) add(step.uid, `Step key「${step.key}」與其他 step 重複`)
 

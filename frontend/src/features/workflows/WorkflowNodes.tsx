@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps, type NodeTypes } from '@xyflow/react'
 import clsx from 'clsx'
+import { Link } from 'react-router-dom'
 import { StatusBadge } from '../../components/StatusBadge'
 import type { TaskStatus } from '../../lib/types'
 import { NODE_WIDTH, type RunNode, type StepNode, type StepNodeData } from './graphModel'
@@ -59,6 +60,16 @@ function NodeHeader({ data }: { data: StepNodeData }) {
                 <span className="truncate font-mono text-xs text-ink-muted">{data.taskType}</span>
                 <StatusBadge status={data.status ?? 'pending'} />
             </div>
+            {data.childRunId && (
+                // nodrag / nopan：點這個連結不要被畫布當成拖曳；stopPropagation 不要順便選取節點
+                <Link
+                    to={`/workflows/${data.childRunId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="nodrag nopan mt-1.5 block border-t border-border pt-1 text-xs font-medium text-accent hover:underline"
+                >
+                    Open child run ↗
+                </Link>
+            )}
         </>
     )
 }
@@ -150,7 +161,7 @@ export function LinkedRunNode({ data }: NodeProps<RunNode>) {
         >
             {!upstream && <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />}
             <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-ink-muted">
-                <span>{upstream ? 'Started by' : 'Started'}</span>
+                <span>{data.caption ?? (upstream ? 'Started by' : 'Started')}</span>
                 <span aria-hidden>↗</span>
             </div>
             <div className="mt-0.5 truncate text-sm font-medium text-ink" title={data.label}>

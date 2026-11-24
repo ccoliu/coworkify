@@ -4,6 +4,7 @@ import type { WorkflowDefinition } from '../../lib/types'
 import { Button } from '../../components/Button'
 import { EmptyState } from '../../components/EmptyState'
 import { StatusBadge } from '../../components/StatusBadge'
+import { FavoriteStar } from './FavoriteStar'
 
 export function DefinitionTable({
     definitions,
@@ -42,9 +43,12 @@ export function DefinitionTable({
                     {definitions.map((d) => (
                         <tr key={d.id} className="border-b border-border last:border-0 hover:bg-surface">
                             <td className="px-4 py-3">
-                                <Link to={`/definitions/${d.id}`} className="font-medium text-ink hover:text-accent">
-                                    {d.name}
-                                </Link>
+                                <div className="flex items-center gap-1.5">
+                                    <FavoriteStar definition={d} />
+                                    <Link to={`/definitions/${d.id}`} className="font-medium text-ink hover:text-accent">
+                                        {d.name}
+                                    </Link>
+                                </div>
                                 <div className="text-xs text-ink-muted">
                                     v{d.version}
                                     {d.input_schema.length > 0 && ` · ${d.input_schema.length} input fields`}

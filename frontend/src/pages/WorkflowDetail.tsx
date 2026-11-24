@@ -130,7 +130,13 @@ export function WorkflowDetail() {
         <div className="flex flex-col gap-5">
             <div className="flex items-start justify-between gap-4">
                 <div>
-                    {workflow.definition_id ? (
+                    {workflow.parent_run ? (
+                        // 子 run：麵包屑回到呼叫它的 run 和步驟
+                        <Link to={`/workflows/${workflow.parent_run.id}`} className="text-sm text-ink-muted hover:text-ink">
+                            ← {workflow.parent_run.name}
+                            {workflow.parent_step_name && ` › ${workflow.parent_step_name}`}
+                        </Link>
+                    ) : workflow.definition_id ? (
                         <Link to={`/definitions/${workflow.definition_id}`} className="text-sm text-ink-muted hover:text-ink">
                             ← {workflow.name}
                             {workflow.definition_version != null && ` · v${workflow.definition_version}`}
@@ -143,7 +149,14 @@ export function WorkflowDetail() {
                     <div className="mt-1 flex items-center gap-3">
                         <h1 className="text-lg font-semibold text-ink">{workflow.name}</h1>
                         <StatusBadge status={workflow.status} />
-                        {workflow.upstream_run ? (
+                        {workflow.trigger_kind === 'subworkflow' ? (
+                            <span
+                                title="Started by a subworkflow step in another run"
+                                className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted"
+                            >
+                                sub-workflow
+                            </span>
+                        ) : workflow.upstream_run ? (
                             <Link
                                 to={`/workflows/${workflow.upstream_run.id}`}
                                 title="Started when this run finished"
@@ -239,6 +252,8 @@ export function WorkflowDetail() {
                             onSelect={setSelectedTaskId}
                             upstreamRun={workflow.upstream_run}
                             downstreamRuns={workflow.downstream_runs}
+                            parentRun={workflow.parent_run}
+                            parentStepName={workflow.parent_step_name}
                         />
                     </div>
                     {selectedStep && (

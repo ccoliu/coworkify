@@ -18,6 +18,7 @@ import { useTheme } from '../../context/ThemeContext'
 import { CanvasBackground } from './CanvasBackground'
 import { autoLayout, stepsFromDrafts, toFlow, wouldCreateCycle, type StepNode } from './graphModel'
 import { TASK_TYPE_DRAG_MIME } from './TaskTypePalette'
+import { WORKFLOW_DRAG_MIME } from './subworkflow'
 import { workflowNodeTypes } from './WorkflowNodes'
 import type { StepDraft } from './WorkflowStepsEditor'
 
@@ -28,6 +29,8 @@ interface Props {
     onSelect: (uid: string | null) => void
     /** 回傳新 step 的 uid，畫布用它把節點放在游標位置 */
     onAddStep: (taskType: string) => string
+    /** 從左側 Workflows 拖進來：建一個呼叫那條定義的 subworkflow 步驟，回傳 uid（找不到定義回 null） */
+    onAddWorkflowStep?: (definitionId: string) => string | null
     /** 回傳複製出來的新 step uid，畫布負責把它放在原節點旁邊 */
     onDuplicateStep: (uid: string) => string | null
     onRemoveStep: (uid: string) => void
@@ -53,6 +56,7 @@ function BuilderCanvas({
     issues,
     onSelect,
     onAddStep,
+    onAddWorkflowStep,
     onDuplicateStep,
     onRemoveStep,
     onConnectSteps,
@@ -117,23 +121,25 @@ function BuilderCanvas({
         [onSelect],
     )
 
-    const addAt = useCallback(
-        (taskType: string, position: XYPosition) => {
-            const uid = onAddStep(taskType)
+    const placeAt = useCallback(
+        (uid: string | null, position: XYPosition) => {
+            if (!uid) return
             pendingPositions.current.set(uid, position)
             selectNode(uid)
         },
-        [onAddStep, selectNode],
+        [selectNode],
     )
 
     const onDrop = useCallback(
         (event: React.DragEvent) => {
             event.preventDefault()
+            const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
             const taskType = event.dataTransfer.getData(TASK_TYPE_DRAG_MIME)
-            if (!taskType) return
-            addAt(taskType, screenToFlowPosition({ x: event.clientX, y: event.clientY }))
+            if (taskType) return placeAt(onAddStep(taskType), position)
+            const definitionId = event.dataTransfer.getData(WORKFLOW_DRAG_MIME)
+            if (definitionId && onAddWorkflowStep) placeAt(onAddWorkflowStep(definitionId), position)
         },
-        [addAt, screenToFlowPosition],
+        [placeAt, onAddStep, onAddWorkflowStep, screenToFlowPosition],
     )
 
     const removeEdge = useCallback(

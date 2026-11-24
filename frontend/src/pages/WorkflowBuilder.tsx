@@ -16,6 +16,12 @@ import { fromStepCreates, toStepCreates, uniqueStepKey } from '../features/workf
 import type { TaskFieldSpec, WorkflowDefinition } from '../lib/types'
 import { InputSchemaEditor } from '../features/workflows/InputSchemaEditor'
 import { issuesByUid, validateGraph, validateInputSchema } from '../features/workflows/validateGraph'
+import {
+    SUBWORKFLOW,
+    subworkflowPayloadFor,
+    useFavoriteDefinitions,
+    useOtherDefinitions,
+} from '../features/workflows/subworkflow'
 
 /**
  * 定義的畫布編輯器。沒給 definition = 新建（POST），有給 = 編輯（PUT 整份取代）。
@@ -28,6 +34,21 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
     const { push } = useToast()
     const { data: taskTypes } = useTaskTypeCatalog()
     const isEdit = definition != null
+
+    // 能當成步驟呼叫的定義：常用的一打開就載入，其他的按了 Show all 才抓。
+    // 正在編輯的這一條不能呼叫自己（更長的循環由後端存檔時擋）
+    const [showOtherWorkflows, setShowOtherWorkflows] = useState(false)
+    const { data: favoriteData } = useFavoriteDefinitions()
+    const { data: otherData, isLoading: othersLoading } = useOtherDefinitions(showOtherWorkflows)
+    const favorites = useMemo(
+        () => (favoriteData ?? []).filter((d) => d.id !== definition?.id),
+        [favoriteData, definition?.id],
+    )
+    const others = useMemo(
+        () => otherData?.filter((d) => d.id !== definition?.id),
+        [otherData, definition?.id],
+    )
+    const callable = useMemo(() => [...favorites, ...(others ?? [])], [favorites, others])
 
     const [name, setName] = useState(definition?.name ?? '')
     const [selectedUid, setSelectedUid] = useState<string | null>(null)
@@ -55,6 +76,19 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
             return addStepOfType(taskType, defaultPayloadFor(spec), key, key)
         },
         [taskTypes, steps, addStepOfType],
+    )
+
+    const addWorkflowStep = useCallback(
+        (definitionId: string): string | null => {
+            const target = callable.find((d) => d.id === definitionId)
+            if (!target) return null
+            const key = uniqueStepKey(target.name, new Set(steps.map((s) => s.key)))
+            const uid = addStepOfType(SUBWORKFLOW, subworkflowPayloadFor(target), target.name, key)
+            // 重試等於把整條子 workflow 重跑一次，預設不重試（跟後端的預設一致）
+            updateStep(uid, { maxRetries: 0 })
+            return uid
+        },
+        [callable, steps, addStepOfType, updateStep],
     )
 
     const duplicateStep = useCallback(
@@ -205,7 +239,17 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
             <Card className="overflow-hidden p-0">
                 <div className="flex flex-col lg:h-[min(78vh,900px)] lg:flex-row">
                     <div className="shrink-0 overflow-y-auto border-b border-border lg:w-52 lg:border-b-0 lg:border-r">
-                        <TaskTypePalette onAdd={addStep} />
+                        <TaskTypePalette
+                            onAdd={addStep}
+                            workflows={{
+                                favorites,
+                                others,
+                                othersLoading,
+                                showOthers: showOtherWorkflows,
+                                onShowOthers: () => setShowOtherWorkflows(true),
+                                onAdd: addWorkflowStep,
+                            }}
+                        />
                     </div>
 
                     <div className="h-[420px] min-w-0 flex-1 lg:h-auto">
@@ -214,6 +258,7 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
                             selectedUid={selectedUid}
                             onSelect={setSelectedUid}
                             onAddStep={addStep}
+                            onAddWorkflowStep={addWorkflowStep}
                             onDuplicateStep={duplicateStep}
                             issues={issueMap}
                             autoLayoutOnLoad={isEdit}
@@ -233,6 +278,8 @@ export function WorkflowBuilder({ definition }: { definition?: WorkflowDefinitio
                                 step={selectedStep}
                                 steps={steps}
                                 issues={issueMap.get(selectedStep.uid) ?? []}
+                                callable={callable}
+                                onShowAllWorkflows={showOtherWorkflows ? undefined : () => setShowOtherWorkflows(true)}
                                 onUpdate={updateStep}
                                 onRemove={(uid) => {
                                     removeStep(uid)

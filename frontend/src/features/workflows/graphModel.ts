@@ -18,6 +18,8 @@ export type StepNodeData = {
     selected: boolean
     /** builder 的驗證訊息；run view 一律空陣列 */
     issues: string[]
+    /** run view 的 subworkflow 步驟：它建出來的子 run */
+    childRunId?: string | null
 }
 
 export type StepNode = Node<StepNodeData, 'task' | 'condition'>
@@ -28,6 +30,8 @@ export type RunNodeData = {
     label: string
     status: WorkflowStatus
     direction: 'upstream' | 'downstream'
+    /** 節點上方的小字，預設依方向是 Started by / Started */
+    caption?: string
 }
 
 export type RunNode = Node<RunNodeData, 'run'>
@@ -37,6 +41,9 @@ export type CanvasNode = StepNode | RunNode
 export interface LinkedRuns {
     upstream?: LinkedRun | null
     downstream?: LinkedRun[]
+    /** 這是子 run 時：呼叫它的 run，畫在最左邊 */
+    parent?: LinkedRun | null
+    parentStepName?: string | null
 }
 
 /**
@@ -58,6 +65,7 @@ export interface GraphStep {
     // for_each 資訊（展開後的 task 只剩 depends_on），所以那邊一律 null。
     forEachId: string | null
     reduceOfId: string | null
+    childRunId?: string | null
 }
 
 const EDGE_COLOR = 'var(--color-baseline)'
@@ -85,6 +93,7 @@ export function stepsFromWorkflow(steps: WorkflowStep[]): GraphStep[] {
         isReduce: s.reduce_of_key != null,
         forEachId: null,
         reduceOfId: null,
+        childRunId: s.child_workflow_id ?? null,
     }))
 }
 
@@ -140,7 +149,8 @@ export function toFlow(steps: GraphStep[]): { nodes: StepNode[]; edges: Edge[] }
             branchWhen: step.branchWhen,
             isReduce: step.isReduce,
             selected: false,
-            issues: []
+            issues: [],
+            childRunId: step.childRunId ?? null,
         },
     }))
 
@@ -231,6 +241,7 @@ export function autoLayout<N extends Node>(nodes: N[], edges: Edge[]): N[] {
 }
 
 const UPSTREAM_NODE_ID = 'run:upstream'
+const PARENT_NODE_ID = 'run:parent'
 
 function runEdge(id: string, source: string, target: string, viaStatus: string | null, sourceHandle?: string): Edge {
     return {
@@ -257,12 +268,20 @@ function runEdge(id: string, source: string, target: string, viaStatus: string |
  * 終點步驟優先挑沒被取消的——分支沒走到的那一邊不是真正收尾的地方。
  */
 function addLinkedRuns(steps: GraphStep[], links: LinkedRuns, nodes: CanvasNode[], edges: Edge[]) {
-    const runNode = (id: string, run: LinkedRun, direction: RunNodeData['direction']): RunNode => ({
+    const runNode = (id: string, run: LinkedRun, direction: RunNodeData['direction'], caption?: string): RunNode => ({
         id,
         type: 'run',
         position: { x: 0, y: 0 },
-        data: { runId: run.id, label: run.name, status: run.status, direction },
+        data: { runId: run.id, label: run.name, status: run.status, direction, caption },
     })
+
+    if (links.parent) {
+        nodes.push(runNode(PARENT_NODE_ID, links.parent, 'upstream', 'Called by'))
+        for (const step of steps.filter((s) => s.dependsOn.length === 0)) {
+            const edge = runEdge(`${PARENT_NODE_ID}->${step.id}`, PARENT_NODE_ID, step.id, null)
+            edges.push({ ...edge, label: links.parentStepName ? `step: ${links.parentStepName}` : 'calls' })
+        }
+    }
 
     if (links.upstream) {
         nodes.push(runNode(UPSTREAM_NODE_ID, links.upstream, 'upstream'))

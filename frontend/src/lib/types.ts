@@ -107,6 +107,8 @@ export interface WorkflowStep {
   task_status: TaskStatus | null
   task_name: string | null
   task_type: string | null
+  // subworkflow 步驟最新的子 run（重試過的話是最後那一個）
+  child_workflow_id?: string | null
 }
 
 export interface Workflow {
@@ -127,10 +129,13 @@ export interface Workflow {
   // 這次 run 經 input_schema 檢查、補完預設值後的輸入
   input: Record<string, unknown> | null
   // 怎麼開始的；手動建立與舊資料是 null
-  trigger_kind?: 'schedule' | 'webhook' | 'workflow' | null
+  trigger_kind?: 'schedule' | 'webhook' | 'workflow' | 'subworkflow' | null
   trigger_id?: string | null
   upstream_run?: LinkedRun | null
   downstream_runs?: LinkedRun[]
+  // 這個 run 是某個 subworkflow 步驟的子 run 時：呼叫它的 run、那個步驟的名稱
+  parent_run?: LinkedRun | null
+  parent_step_name?: string | null
 }
 
 export interface LinkedRun {
@@ -227,6 +232,8 @@ export interface WorkflowDefinition {
   // 跟 task-type catalog 的 field spec 同形，run 表單直接用 TaskPayloadFields 畫
   input_schema: TaskFieldSpec[]
   version: number
+  // 標成常用：建構器的 Workflows 選單先列出這些
+  is_favorite: boolean
   created_at: string
   updated_at: string
   run_count: number

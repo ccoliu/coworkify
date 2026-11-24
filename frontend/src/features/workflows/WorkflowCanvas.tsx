@@ -33,9 +33,20 @@ interface Props {
     // workflow 觸發器串起來的上下游 run，畫在兩側
     upstreamRun?: LinkedRun | null
     downstreamRuns?: LinkedRun[]
+    // 這是子 run 時：呼叫它的 run 與步驟名稱，畫在最左邊
+    parentRun?: LinkedRun | null
+    parentStepName?: string | null
 }
 
-export function WorkflowCanvas({ steps, selectedTaskId, onSelect, upstreamRun, downstreamRuns }: Props) {
+export function WorkflowCanvas({
+    steps,
+    selectedTaskId,
+    onSelect,
+    upstreamRun,
+    downstreamRuns,
+    parentRun,
+    parentStepName,
+}: Props) {
     const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
     const { theme } = useTheme()
@@ -46,14 +57,19 @@ export function WorkflowCanvas({ steps, selectedTaskId, onSelect, upstreamRun, d
     // 把高亮洗掉。
 
     useEffect(() => {
-        const graph = buildWorkflowGraph(steps, { upstream: upstreamRun, downstream: downstreamRuns })
+        const graph = buildWorkflowGraph(steps, {
+            upstream: upstreamRun,
+            downstream: downstreamRuns,
+            parent: parentRun,
+            parentStepName,
+        })
         setNodes(
             graph.nodes.map((n) =>
                 n.type !== 'run' && n.id === selectedTaskId ? { ...n, data: { ...n.data, selected: true } } : n,
             ),
         )
         setEdges(graph.edges)
-    }, [steps, upstreamRun, downstreamRuns, selectedTaskId, setNodes, setEdges])
+    }, [steps, upstreamRun, downstreamRuns, parentRun, parentStepName, selectedTaskId, setNodes, setEdges])
 
     return (
         <ReactFlow<CanvasNode>

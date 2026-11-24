@@ -43,6 +43,16 @@ export function StepDetailPanel({ step, onClose }: { step: WorkflowStep; onClose
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
                 <Row label="Status" value={<StatusBadge status={step.task_status ?? 'pending'} />} />
                 {step.branch_of_key && <Row label="Branch" value={`when ${step.branch_when}`} />}
+                {step.child_workflow_id && (
+                    <Row
+                        label="Child run"
+                        value={
+                            <Link to={`/workflows/${step.child_workflow_id}`} className="font-medium text-accent hover:underline">
+                                Open ↗
+                            </Link>
+                        }
+                    />
+                )}
 
                 {isLoading && (
                     <div className="flex justify-center py-6">

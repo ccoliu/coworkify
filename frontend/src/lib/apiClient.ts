@@ -191,8 +191,10 @@ export function deleteWorkflow(id: string): Promise<void> {
   return request(`/workflows/${id}`, { method: 'DELETE' })
 }
 
-export function listDefinitions(limit = 20, offset = 0): Promise<WorkflowDefinition[]> {
+/** favorite：true 只列常用的、false 只列其他的、不給就全部 */
+export function listDefinitions(limit = 20, offset = 0, favorite?: boolean): Promise<WorkflowDefinition[]> {
   const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (favorite !== undefined) params.set('favorite', String(favorite))
   return request(`/definitions/?${params.toString()}`)
 }
 
@@ -206,6 +208,10 @@ export function createDefinition(body: WorkflowDefinitionCreate): Promise<Workfl
 
 export function replaceDefinition(id: string, body: WorkflowDefinitionCreate): Promise<WorkflowDefinition> {
   return request(`/definitions/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+}
+
+export function setDefinitionFavorite(id: string, favorite: boolean): Promise<WorkflowDefinition> {
+  return request(`/definitions/${id}/favorite`, { method: favorite ? 'PUT' : 'DELETE' })
 }
 
 export function deleteDefinition(id: string): Promise<void> {

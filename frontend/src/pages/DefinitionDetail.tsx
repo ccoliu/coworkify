@@ -11,6 +11,7 @@ import {
 } from '../lib/apiClient'
 import { formatDateTime } from '../lib/format'
 import { Button } from '../components/Button'
+import { FavoriteStar } from '../features/workflows/FavoriteStar'
 import { Card } from '../components/Card'
 import { EmptyState } from '../components/EmptyState'
 import { Spinner } from '../components/Spinner'
@@ -116,6 +117,7 @@ export function DefinitionDetail() {
                         ← Workflows
                     </Link>
                     <div className="mt-1 flex items-center gap-3">
+                        <FavoriteStar definition={definition} className="text-lg" />
                         <h1 className="text-lg font-semibold text-ink">{definition.name}</h1>
                         <span className="rounded-full border border-border px-2 py-0.5 text-xs text-ink-muted">
                             v{definition.version}
@@ -175,7 +177,13 @@ export function DefinitionDetail() {
                     <ol className="flex flex-col gap-1.5">
                         {definition.steps.map((s) => (
                             <li key={s.key} className="flex items-center justify-between gap-3 text-sm">
-                                <span className="truncate text-ink">{s.name}</span>
+                                {s.task_type === 'subworkflow' && typeof s.payload.definition_id === 'string' ? (
+                                    <Link to={`/definitions/${s.payload.definition_id}`} className="truncate text-ink hover:text-accent">
+                                        {s.name} ↗
+                                    </Link>
+                                ) : (
+                                    <span className="truncate text-ink">{s.name}</span>
+                                )}
                                 <span className="shrink-0 font-mono text-xs text-ink-muted">
                                     {s.key} · {s.task_type}
                                 </span>

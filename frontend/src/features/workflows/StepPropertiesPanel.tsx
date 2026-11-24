@@ -1,8 +1,11 @@
+import { Link } from 'react-router-dom'
 import { defaultPayloadFor, useTaskTypeCatalog } from '../../lib/taskTypeCatalog'
+import type { WorkflowDefinition } from '../../lib/types'
 import { Button } from '../../components/Button'
 import { Input, Label, Select } from '../../components/Field'
 import { TaskPayloadFields } from '../tasks/TaskPayloadFields'
 import type { StepDraft } from './WorkflowStepsEditor'
+import { SUBWORKFLOW, calledDefinitionId, subworkflowPayloadFor, useDefinition } from './subworkflow'
 
 interface Props {
     step: StepDraft
@@ -10,11 +13,22 @@ interface Props {
     issues: string[]
     onUpdate: (uid: string, patch: Partial<StepDraft>) => void
     onRemove: (uid: string) => void
+    /** subworkflow 步驟可以選的定義（常用的，加上按過 Show all 之後的其他定義） */
+    callable?: WorkflowDefinition[]
+    /** 其他定義還沒載入時才有：按了去載入 */
+    onShowAllWorkflows?: () => void
 }
 
-export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }: Props) {
+export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove, callable = [], onShowAllWorkflows }: Props) {
     const { data: taskTypes } = useTaskTypeCatalog()
     const spec = taskTypes?.find((t) => t.task_type === step.taskType)
+    const isSubworkflow = step.taskType === SUBWORKFLOW
+    const calledId = isSubworkflow ? calledDefinitionId(step.payload) : null
+    // 呼叫的定義不一定在已載入的清單裡（不是常用、也還沒按 Show all），單獨抓一次它的輸入欄位。
+    // 抓回來之前先用清單裡的那份，切換定義時欄位不會閃一下
+    const calledQuery = useDefinition(calledId)
+    const called = calledQuery.data ?? callable.find((d) => d.id === calledId)
+    const workflowOptions = called && !callable.some((d) => d.id === called.id) ? [called, ...callable] : callable
 
     const byUid = new Map(steps.map((s) => [s.uid, s]))
     const nameOf = (uid: string) => byUid.get(uid)?.name.trim() || 'step'
@@ -65,6 +79,49 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                     />
                 </div>
 
+                {isSubworkflow ? (
+                <div>
+                    <Label htmlFor="step-workflow">Runs workflow</Label>
+                    <Select
+                        id="step-workflow"
+                        value={calledId ?? ''}
+                        onChange={(e) => {
+                            const next = workflowOptions.find((d) => d.id === e.target.value)
+                            // 換一條定義就換一組輸入欄位，舊的值對新的定義沒有意義
+                            if (next) onUpdate(step.uid, { payload: subworkflowPayloadFor(next) })
+                        }}
+                    >
+                        {!called && (
+                            <option value="">
+                                {!calledId ? '— choose —' : calledQuery.isError ? '— workflow no longer exists —' : 'Loading…'}
+                            </option>
+                        )}
+                        {workflowOptions.map((d) => (
+                            <option key={d.id} value={d.id}>
+                                {d.name}
+                            </option>
+                        ))}
+                    </Select>
+                    {onShowAllWorkflows && (
+                        <button type="button" onClick={onShowAllWorkflows} className="mt-1 text-xs font-medium text-accent">
+                            清單只有常用的 workflow，按這裡顯示全部
+                        </button>
+                    )}
+                    <p className="mt-1 text-xs text-ink-muted">
+                        等它跑完才往下走；下游用{' '}
+                        <code className="font-mono">{`{{steps.${step.key}.result.<它的步驟 key>}}`}</code>{' '}
+                        拿它的成品。
+                        {called && (
+                            <>
+                                {' '}
+                                <Link to={`/definitions/${called.id}`} target="_blank" className="text-accent hover:underline">
+                                    Open ↗
+                                </Link>
+                            </>
+                        )}
+                    </p>
+                </div>
+                ) : (
                 <div>
                     <Label htmlFor="step-type">Task type</Label>
                     <Select
@@ -83,6 +140,7 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                         ))}
                     </Select>
                 </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -199,6 +257,21 @@ export function StepPropertiesPanel({ step, steps, issues, onUpdate, onRemove }:
                             {step.dependsOnUids.map(nameOf).join('、')}
                         </p>
                         <p className="mt-1 text-xs text-ink-muted">在畫布上拉線／刪線來調整</p>
+                    </div>
+                )}
+
+                {called && called.input_schema.length > 0 && (
+                    <div className="border-t border-border pt-3">
+                        <p className="mb-2 text-xs uppercase tracking-wide text-ink-muted">Inputs for {called.name}</p>
+                        <TaskPayloadFields
+                            idPrefix={`step-${step.uid}`}
+                            fields={called.input_schema}
+                            payload={step.payload}
+                            onChange={(payload) => onUpdate(step.uid, { payload })}
+                        />
+                        <p className="mt-2 text-xs text-ink-muted">
+                            可以用 <code className="font-mono">{'{{steps.<key>.result...}}'}</code> 帶入上游的結果。
+                        </p>
                     </div>
                 )}
 

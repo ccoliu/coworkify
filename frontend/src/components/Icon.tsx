@@ -4,6 +4,7 @@ import { VscTerminalCmd } from "react-icons/vsc";
 import { MdOutlineCallSplit } from "react-icons/md";
 import { FaRobot } from "react-icons/fa";
 import { BiImport } from "react-icons/bi";
+import { TbSitemap } from "react-icons/tb";
 
 export function PythonIcon() {
     return <FaPython />
@@ -38,6 +39,8 @@ export function getIcon(name: string) {
             return <RobotIcon />
         case 'input':
             return <BiImportIcon />
+        case 'subworkflow':
+            return <TbSitemap />
         default:
             return null
     }

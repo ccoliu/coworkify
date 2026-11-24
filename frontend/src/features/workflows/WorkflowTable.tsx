@@ -41,7 +41,12 @@ export function WorkflowTable({ workflows, onRerun, onDelete, isRerunning }: { w
                                     <Link to={`/workflows/${wf.id}`} className="font-medium text-ink hover:text-accent">
                                         {wf.name}
                                     </Link>
-                                    <div className="font-mono text-xs text-ink-muted">{shortId(wf.id)}</div>
+                                    <div className="flex items-center gap-1.5 font-mono text-xs text-ink-muted">
+                                        {shortId(wf.id)}
+                                        {wf.trigger_kind === 'subworkflow' && (
+                                            <span className="rounded bg-plane px-1 font-sans text-[10px]">sub-workflow</span>
+                                        )}
+                                    </div>
                                 </td>
                                 <td className="px-4 py-3">
                                     <StatusBadge status={wf.status} />
