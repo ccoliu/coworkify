@@ -60,6 +60,7 @@ class WorkflowDefinitionResponse(BaseModel):
     steps: List[WorkflowStepCreate]
     input_schema: List[InputFieldSpec]
     version: int
+    is_favorite: bool = False
     created_at: datetime
     updated_at: datetime
     # 由 API 另外掛上去的統計，不是欄位

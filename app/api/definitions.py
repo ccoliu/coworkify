@@ -1,8 +1,8 @@
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.api.workflows import _attach_task_details
@@ -119,15 +119,15 @@ def create_definition(
 def list_definitions(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    favorite: Optional[bool] = Query(None, description="true 只列常用的，false 只列其他的，不給就全部"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    query = select(WorkflowDefinition).where(WorkflowDefinition.created_by == current_user.id)
+    if favorite is not None:
+        query = query.where(WorkflowDefinition.is_favorite == favorite)
     definitions = db.scalars(
-        select(WorkflowDefinition)
-        .where(WorkflowDefinition.created_by == current_user.id)
-        .order_by(WorkflowDefinition.updated_at.desc())
-        .limit(limit)
-        .offset(offset)
+        query.order_by(WorkflowDefinition.updated_at.desc()).limit(limit).offset(offset)
     ).all()
     _attach_run_stats(db, definitions)
     return definitions 
@@ -141,6 +141,36 @@ def get_definition(
     definition = _get_definition_or_404(db, definition_id, current_user)
     _attach_run_stats(db, [definition])
     return definition
+
+def _set_favorite(db: Session, definition_id: UUID, user: User, value: bool) -> WorkflowDefinition:
+    definition = _get_definition_or_404(db, definition_id, user)
+    # 明確把 updated_at 設回自己，蓋掉 onupdate：標星號不是改定義，不該讓它跳到清單最上面
+    db.execute(
+        update(WorkflowDefinition)
+        .where(WorkflowDefinition.id == definition.id)
+        .values(is_favorite=value, updated_at=WorkflowDefinition.updated_at)
+    )
+    db.commit()
+    db.refresh(definition)
+    _attach_run_stats(db, [definition])
+    return definition
+
+@router.put("/{definition_id}/favorite", response_model=WorkflowDefinitionResponse)
+def favorite_definition(
+    definition_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """標成常用。重複標沒有副作用。"""
+    return _set_favorite(db, definition_id, current_user, True)
+
+@router.delete("/{definition_id}/favorite", response_model=WorkflowDefinitionResponse)
+def unfavorite_definition(
+    definition_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _set_favorite(db, definition_id, current_user, False)
 
 @router.put("/{definition_id}", response_model=WorkflowDefinitionResponse)
 def replace_definition(

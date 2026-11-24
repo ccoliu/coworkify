@@ -30,6 +30,8 @@ class WorkflowDefinition(Base):
     input_schema: Mapped[List[Any]] = mapped_column(JSON, nullable=False, default=list)
     # steps 或 input_schema 有變才 +1；run 記下自己用的是哪一版
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 使用者標成常用的定義：建構器的 Workflows 選單先載入這些，其他的要用時才抓
+    is_favorite: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
