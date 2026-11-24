@@ -19,6 +19,7 @@ from app.models.trigger import TriggerKind, WorkflowTrigger
 from app.models.workflow import Workflow, WorkflowDefinition
 from app.schemas.definition import resolve_run_input
 from app.tasks.executor import create_workflow_from_steps
+from app.tasks.subworkflow import SUBWORKFLOW, parent_run
 
 logger = logging.getLogger(__name__)
 
@@ -125,9 +126,13 @@ def _chain_depth(db, run: Workflow) -> int:
     current = run
     while current is not None and depth < MAX_CHAIN_DEPTH:
         parent_id = upstream_run_id(current)
-        if parent_id is None:
+        if parent_id is not None:
+            current = db.get(Workflow, parent_id)
+        elif current.trigger_kind == SUBWORKFLOW:
+            # 子 run 也算一層：A 呼叫 B、B 結束又觸發 A，這種圈只能靠深度上限擋下
+            current = parent_run(db, current)
+        else:
             break
-        current = db.get(Workflow, parent_id)
         depth += 1
     return depth
 

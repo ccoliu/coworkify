@@ -44,6 +44,13 @@ class WorkflowStepCreate(BaseModel):
         None, description="搭配 branch_of 使用：這個分支要在 condition 結果是 true 還是 false 時執行。"
     )
 
+    @model_validator(mode="after")
+    def subworkflow_does_not_retry_by_default(self):
+        # 重試 subworkflow 等於把整條子 workflow 重跑一次，沒明確要求就不重試
+        if self.task_type == "subworkflow" and "max_retries" not in self.model_fields_set:
+            self.max_retries = 0
+        return self
+
 class StepsGraph(BaseModel):
     """steps + DAG 驗證；一次性 workflow 與 workflow definition 共用。"""
     steps: List[WorkflowStepCreate] = Field(..., min_length=1)
@@ -229,6 +236,8 @@ class WorkflowStepResponse(BaseModel):
     task_status: Optional[str] = None
     task_name: Optional[str] = None
     task_type: Optional[str] = None
+    # subworkflow 步驟最新的子 run（重試過的話是最後那一個）
+    child_workflow_id: Optional[UUID] = None
 
 class LinkedRun(BaseModel):
     """workflow 觸發器串起來的另一個 run，給詳細頁顯示與連過去用。"""
@@ -264,3 +273,6 @@ class WorkflowResponse(BaseModel):
     # 只有 GET /workflows/{id} 會填：被哪個上游 run 啟動、啟動了哪些下游 run
     upstream_run: Optional[LinkedRun] = None
     downstream_runs: List[LinkedRun] = []
+    # 這個 run 是某個 subworkflow 步驟的子 run 時：那個步驟所在的 run、步驟名稱
+    parent_run: Optional[LinkedRun] = None
+    parent_step_name: Optional[str] = None

@@ -94,6 +94,11 @@ def _parse_json_body(raw):
     except json.JSONDecodeError as exc:
         raise ValueError(f"payload.body 不是合法的 JSON: {exc}") from exc
 
+
+class PermanentTaskError(Exception):
+    """重試也不會好的失敗（設定錯了、要用的東西已經不在了）：不管 max_retries，直接標 FAILED。"""
+
+
 class NotReady(Exception):
     """sensor 的條件還沒成立：poke_after 秒後再檢查一次。不是失敗。"""
 
@@ -716,7 +721,14 @@ TASK_REGISTRY = {
 }
 
 # 哪些 task_type 是 sensor，以及怎麼從 payload 算出它的逾時秒數
-SENSOR_TIMEOUTS = {"wait_for": wait_for_timeout_seconds}
+# subworkflow 等子 run 最多一天；逾時這一步失敗，子 run 不會被取消
+SUBWORKFLOW_TIMEOUT_SECONDS = 86400
+
+# 哪些 task_type 是 sensor，以及怎麼從 payload 算出它的逾時秒數
+SENSOR_TIMEOUTS = {
+    "wait_for": wait_for_timeout_seconds,
+    "subworkflow": lambda payload: SUBWORKFLOW_TIMEOUT_SECONDS
+}
 
 # 任務路由表：將 task_type 字串映射到對應的 Python 函數
 def get_task_handler(task_type: str):

@@ -15,6 +15,7 @@ from app.schemas.workflow import WorkflowCreate, WorkflowResponse
 from app.schemas.schedule import PromoteWorkflowToSchedule, WorkflowScheduleResponse
 from app.tasks.executor import execute_task, create_workflow_from_steps, retry_workflow_from_failure
 from app.tasks.triggers import downstream_runs, upstream_run_id, upstream_outcome
+from app.tasks.subworkflow import SUBWORKFLOW, parent_run
 from app.core.security import get_current_user
 from app.core.ownership import get_owned_or_404
 from app.core.rate_limit import RateLimiter
@@ -41,6 +42,17 @@ def _attach_task_details(db: Session, steps: list[WorkflowStep]) -> None:
             s.task_status = task.status
             s.task_name = task.name
             s.task_type = task.task_type
+    sub_ids = [t.id for t in tasks_by_id.values() if t.task_type == SUBWORKFLOW]
+    if sub_ids:
+        latest_child = {}
+        for child_id, parent_task_id in db.execute(
+            select(Workflow.id, Workflow.trigger_id)
+            .where(Workflow.trigger_kind == SUBWORKFLOW, Workflow.trigger_id.in_(sub_ids))
+            .order_by(Workflow.created_at)
+        ).all():
+            latest_child[parent_task_id] = child_id
+        for s in steps:
+            s.child_workflow_id = latest_child.get(s.task_id)
 
 def _attach_linked_runs(db: Session, workflow: Workflow, user: User) -> None:
     """workflow 觸發器串起來的上下游 run。觸發器只接同一個人的 run，這裡再檢查一次擁有者。"""
@@ -53,6 +65,11 @@ def _attach_linked_runs(db: Session, workflow: Workflow, user: User) -> None:
         workflow.upstream_run.via_status = upstream_outcome(workflow)
     for run in workflow.downstream_runs:
         run.via_status = upstream_outcome(run)
+    parent = parent_run(db, workflow)
+    if parent is not None and parent.created_by == user.id:
+        workflow.parent_run = parent
+        parent_task = db.get(Task, workflow.trigger_id)
+        workflow.parent_step_name = parent_task.name if parent_task else None
 
 @router.post("/", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
 def create_workflow(

@@ -10,7 +10,7 @@ from app.celery_app import celery_app, DEDICATED_QUEUES
 from app.db import SessionLocal
 from app.models.task import Task, TaskStatus
 from app.models.task_log import TaskLog
-from app.tasks.handler import get_task_handler, TASK_REGISTRY, NotReady, SENSOR_TIMEOUTS
+from app.tasks.handler import get_task_handler, PermanentTaskError ,TASK_REGISTRY, NotReady, SENSOR_TIMEOUTS
 from app.tasks.connections import resolve_connections, scrub
 import os
 import redis
@@ -61,16 +61,21 @@ def execute_task(self, task_id: str):
             return f"Task {task_uuid} was not claimed: it is {task.status}"
         claimed = True
         notify_status_change(str(task.id), TaskStatus.RUNNING, None, None)
-       
-        # 2. 尋找對應的 handler
-        handler = get_task_handler(task.task_type)
-        if not handler:
-            raise ValueError(f"Unknown task type: {task.task_type}. Available types: {list(TASK_REGISTRY.keys())}")
-        
-        # 3. 代換 {{connections.x}}：明文只存在這一份 payload 裡，不寫回資料庫
+
+        # 2. 代換 {{connections.x}}：明文只存在這一份 payload 裡，不寫回資料庫
         payload, secrets = resolve_connections(db, task)
         payload = _start_sensor_clock(db, task, payload)
-        result = scrub(handler(payload), secrets)
+
+        # 3. 執行。subworkflow 要用資料庫和自己的 task id 去建、去查子 run，不走一般 handler
+        if task.task_type == "subworkflow":
+            from app.tasks.subworkflow import run_subworkflow_step
+
+            result = run_subworkflow_step(db, task, payload, resumed=previous_status == TaskStatus.WAITING)
+        else:
+            handler = get_task_handler(task.task_type)
+            if not handler:
+                raise ValueError(f"Unknown task type: {task.task_type}. Available types: {list(TASK_REGISTRY.keys())}")
+            result = scrub(handler(payload), secrets)
         execute_time_ms = (time.time() - start_time) * 1000
 
         # 4. 執行成功
@@ -103,6 +108,9 @@ def execute_task(self, task_id: str):
             exc = RuntimeError(error_message)
 
         if task:
+            if isinstance(exc, PermanentTaskError):
+                # 重試也不會好：把次數用完，record_task_failure 就會直接標 FAILED
+                task.retry_count = task.max_retries
             countdown = record_task_failure(db, task, error_message, execute_time_ms)
             db.close()
             if countdown is not None:
@@ -639,6 +647,7 @@ def advance_workflow(db, task: Task):
             workflow.result = _collect_workflow_output(db, all_steps)
             db.commit()
             _enqueue_completion_triggers(db, workflow, WorkFlowStatus.SUCCESS)
+            wake_parent_step(db, workflow)
 
     elif task.status == TaskStatus.FAILED:
         # 這個 task 失敗了：把所有下游(直接+間接依賴它的)step 取消掉，整條 workflow 標記失敗
@@ -661,6 +670,29 @@ def advance_workflow(db, task: Task):
         workflow.status = WorkFlowStatus.FAILED
         db.commit()
         _enqueue_completion_triggers(db, workflow, WorkFlowStatus.FAILED)
+        wake_parent_step(db, workflow)
+
+
+def wake_parent_step(db, workflow: Workflow) -> None:
+    """
+    這條 run 是某個 subworkflow 步驟的子 run：把那個步驟的 scheduled_at 拉到現在並派送，
+    讓它馬上去收結果，不用等下一次備援檢查。
+
+    步驟還不是 WAITING（剛建好子 run、還沒轉成 WAITING，子 run 就跑完了）時不動它：
+    它轉成 WAITING 後，備援檢查會在 FALLBACK_CHECK_SECONDS 內收到結果。
+    """
+    if workflow.trigger_kind != "subworkflow" or workflow.trigger_id is None:
+        return
+    parent = db.get(Task, workflow.trigger_id)
+    if parent is None or parent.status != TaskStatus.WAITING:
+        return
+    parent.scheduled_at = datetime.utcnow()
+    db.commit()
+    try:
+        dispatch_task(parent)
+    except Exception:
+        # 子 run 已經確定結束了；派送失敗交給 recover_lost_waiting_tasks
+        logger.exception("Couldn't wake parent step %s of run %s", parent.id, workflow.id)
 
 
 def _enqueue_completion_triggers(db, workflow: Workflow, status: str) -> None:

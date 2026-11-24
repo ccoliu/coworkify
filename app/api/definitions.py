@@ -20,6 +20,7 @@ from app.schemas.definition import (
 )
 from app.schemas.workflow import WorkflowResponse
 from app.tasks.executor import create_workflow_from_steps
+from app.tasks.subworkflow import SUBWORKFLOW, calls_back_into, child_input
 
 router = APIRouter(
     prefix="/definitions",
@@ -57,12 +58,51 @@ def _attach_run_stats(db: Session, definitions: list[WorkflowDefinition]) -> Non
         d.run_count = counts.get(d.id, 0)
         d.last_run = latest_by_def.get(d.id)
 
+def _check_subworkflows_or_400(db: Session, user: User, steps: list[dict], self_id: UUID | None = None) -> None:
+    """
+    subworkflow 步驟要呼叫的定義必須存在、是自己的、輸入欄位都有宣告，而且不能繞回這份定義本身。
+    在存檔時擋，不是等跑到那一步才失敗。新建的定義還沒有 id，別人不可能呼叫它，不會成環。
+    """
+    for step in steps:
+        if step["task_type"] != SUBWORKFLOW:
+            continue
+        key = step["key"]
+        try:
+            child_id = UUID(str(step["payload"].get("definition_id")))
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step '{key}' subworkflow definition_id must be a valid UUID"
+            )
+        child = db.get(WorkflowDefinition, child_id)
+        if child is None or child.created_by != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step '{key}' subworkflow definition not found or not owned by you."
+            )
+        if self_id is not None and calls_back_into(db, {child_id}, self_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step '{key}': '{child.name}' leads back to this workflow, which would loop forever"
+            )
+        declared = {f["key"] for f in child.input_schema or []}
+        unknown = sorted(set(child_input(step["payload"])) - declared)
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Step '{key}' passes {', '.join(unknown)}, which '{child.name}' doesn't take as input",
+            )
+
+
+
 @router.post("/", response_model=WorkflowDefinitionResponse, status_code=status.HTTP_201_CREATED)
 def create_definition(
     payload: WorkflowDefinitionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    steps = [s.model_dump() for s in payload.steps]
+    _check_subworkflows_or_400(db, current_user, steps)
     definition = WorkflowDefinition(
         name = payload.name,
         description = payload.description,
@@ -113,6 +153,7 @@ def replace_definition(
     definition = _get_definition_or_404(db, definition_id, current_user)
     
     new_steps = [s.model_dump() for s in payload.steps]
+    _check_subworkflows_or_400(db, current_user, new_steps, self_id=definition_id)
     new_schema = [f.model_dump() for f in payload.input_schema]
     if new_steps != definition.steps or new_schema != definition.input_schema:
         definition.version += 1
