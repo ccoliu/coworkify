@@ -57,8 +57,10 @@ const SECTIONS = [
     ['example', '例子：價格警示'],
     ['task-types', '任務類型與屬性'],
     ['data', '資料怎麼在步驟之間流動'],
+    ['subworkflow', '呼叫另一條 workflow'],
     ['retry', 'Retry 與 Re-run'],
     ['schedule', '設成定期執行'],
+    ['triggers', '由事件觸發'],
     ['connections', '密鑰（Connections）'],
     ['troubleshooting', '卡住的時候'],
     ['api', '用 API 做同一件事'],
@@ -70,10 +72,11 @@ const COMMON_FIELDS: [string, string][] = [
     ['Name', '顯示用的名稱，可以隨意取；不影響取值'],
     ['Task type', '換類型會重設這一步的專屬欄位'],
     ['Priority', '0 最優先，數字越大越晚被 worker 取走（0–9，Celery 搭配 Redis 的規則）。預設 3'],
-    ['Max retries', '這一步自己失敗時的重試次數，採指數退避。預設 3；用完才算整條 workflow 失敗'],
+    ['Max retries', '這一步自己失敗時的重試次數，採指數退避。預設 3（subworkflow 步驟預設 0）；用完才算整條 workflow 失敗'],
     ['Depends on', '在畫布上拉線就是依賴；上游全部成功後這一步才會被派送'],
     ['分支', '從 condition 節點的 true / false 出口拉線，等同設定 branch_of 與 branch_when'],
     ['For each', '指向一個結果是 list 的步驟，這一步會依項目逐一展開；payload 內用 {{item}} 取值'],
+    ['Reduce from', '指向一個 for each 步驟，等它展開出來的項目全部完成才執行，拿到依項目順序排好的結果 list'],
 ]
 
 const TASK_TYPES: { type: string; label: string; summary: ReactNode; fields: [string, string, ReactNode][] }[] = [
@@ -200,6 +203,50 @@ const TASK_TYPES: { type: string; label: string; summary: ReactNode; fields: [st
                     建議填 <Mono>{'{{connections.<name>}}'}</Mono>；留空用 worker 的 <Mono>DISCORD_WEBHOOK_URL</Mono>
                 </>,
             ],
+        ],
+    },
+    {
+        type: 'wait_for',
+        label: 'Wait for (sensor)',
+        summary: (
+            <>
+                反覆檢查一個回傳 JSON 的網址，直到某個欄位等於期望值，適合等 CI、部署這類要跑好幾分鐘的外部工作。
+                還沒好時這一步顯示 <Mono>waiting</Mono>，<strong className="text-ink">等待期間不佔 worker</strong>
+                ，也不消耗重試次數；逾時直接失敗、不重試。
+            </>
+        ),
+        fields: [
+            ['url', '必填', '一律用 GET、不跟隨轉址，SSRF 檢查與 http_request 相同'],
+            ['headers', '選填', <>JSON 物件，可以放 <Mono>{'{{connections.<name>}}'}</Mono></>],
+            ['path', '必填', <>回應 JSON 裡要看的欄位，點分隔、數字是陣列索引，例如 <Mono>workflow_runs.0.status</Mono></>],
+            [
+                'expected',
+                '必填',
+                <>
+                    欄位等於它就算完成，比對分型別。填文字就是比對字串；要比對數字、布林或多個值之一，填 JSON 陣列，例如{' '}
+                    <Mono>[200]</Mono>、<Mono>{'["success", "skipped"]'}</Mono>
+                </>,
+            ],
+            ['interval_seconds', '選填', '檢查間隔，預設 30（5–600）'],
+            ['timeout_seconds', '選填', '從第一次檢查算起最多等多久，預設 3600（最多 86400）'],
+        ],
+    },
+    {
+        type: 'subworkflow',
+        label: 'Workflow（呼叫另一條 workflow）',
+        summary: (
+            <>
+                把另一條 workflow 當成一個步驟來跑，結果是那次子 run 的 Result。它的欄位取決於被呼叫的
+                workflow，所以不在上面那份目錄裡，要從左側面板的 Workflows 區塊加入，見
+                <a href="#subworkflow" className="text-accent hover:underline">
+                    呼叫另一條 workflow
+                </a>
+                。
+            </>
+        ),
+        fields: [
+            ['Runs workflow', '必填', '要呼叫哪一條 workflow，只能選自己的，也不能直接或間接呼叫回自己'],
+            ['（它的輸入欄位）', '依定義', '被呼叫的 workflow 宣告的 Input fields，必填與預設值照它的設定'],
         ],
     },
     {
@@ -436,6 +483,39 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
 
 
 
+            <Section id="subworkflow" title="呼叫另一條 workflow">
+                <p>
+                    已經有一條寫好的 workflow（例如「抓 issue 並分級」），另一條也想用它時，不用把步驟複製過去——把它當成一個步驟呼叫就好。
+                </p>
+                <ul className="flex flex-col gap-2 pl-4">
+                    <li className="list-disc">
+                        畫布左側面板下方的 <strong className="text-ink">Workflows</strong>{' '}
+                        區塊列出可以呼叫的 workflow，拖進畫布或點一下就是一個步驟。右側屬性面板會出現它的輸入欄位，用法跟 Run 表單一樣。
+                    </li>
+                    <li className="list-disc">
+                        區塊一開始只列出標了 <strong className="text-ink">★</strong> 的常用 workflow，其他的按 Show other workflows
+                        才載入。在{' '}
+                        <Link to="/workflows" className="text-accent hover:underline">
+                            Workflows
+                        </Link>{' '}
+                        列表、定義頁或這個區塊點 ☆ 就能標成常用。
+                    </li>
+                    <li className="list-disc">
+                        執行到這一步時會建立一次<strong className="text-ink">子 run</strong>，這一步顯示 waiting
+                        直到子 run 結束，等待期間不佔 worker。子 run 成功時，這一步的結果就是子 run 的 Result，下游用{' '}
+                        <Mono>{'inputs["<這一步的 key>"]["<子 run 終端步驟的 key>"]'}</Mono> 取值。
+                    </li>
+                    <li className="list-disc">
+                        節點上的 <strong className="text-ink">Open child run ↗</strong> 連到子 run；子 run
+                        的畫布左邊有 Called by 節點，頁面上方也有麵包屑可以回到父 run。
+                    </li>
+                    <li className="list-disc">
+                        子 run 失敗時，這一步會失敗，錯誤訊息寫著是哪個子 run 的哪一步出錯。這種步驟預設不自動重試，因為每次重試都會整條重跑；修好之後用
+                        Retry failed steps 續跑，會建一個新的子 run，舊的那次保留著可以查。
+                    </li>
+                </ul>
+            </Section>
+
             <Section id="retry" title="Retry 與 Re-run">
                 <Table
                     head={['', '做什麼', '什麼時候用']}
@@ -473,6 +553,86 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                 </p>
             </Section>
 
+            <Section id="triggers" title="由事件觸發">
+                <p>
+                    除了照時間跑，也可以在事情發生時才跑。到{' '}
+                    <Link to="/triggers" className="text-accent hover:underline">
+                        Triggers
+                    </Link>{' '}
+                    → New trigger，在 Starts when 選一種：
+                </p>
+                <Table
+                    head={['種類', '什麼時候啟動', '輸入從哪裡來']}
+                    rows={[
+                        [
+                            <strong className="text-ink">Webhook</strong>,
+                            'GitHub 或自己的腳本對觸發器的網址送一個 POST',
+                            <>
+                                請求 body 的 JSON，例如 <Mono>issue.title</Mono>、<Mono>repository.full_name</Mono>
+                            </>,
+                        ],
+                        [
+                            <strong className="text-ink">After another workflow</strong>,
+                            <>另一條 workflow 的 run 結束時，可以選 succeeds / fails / finishes (either way)</>,
+                            <>
+                                上游 run 的 <Mono>{'result.<step key>'}</Mono>（終端步驟的結果）、
+                                <Mono>{'input.<欄位>'}</Mono>、<Mono>status</Mono>
+                            </>,
+                        ],
+                    ]}
+                />
+                <ul className="flex flex-col gap-2 pl-4">
+                    <li className="list-disc">
+                        <strong className="text-ink">Input mapping</strong>：替這條 workflow 的每個輸入欄位填一個路徑，告訴它從事件的哪裡取值，點分隔、數字是陣列索引；留空就用欄位的預設值。
+                    </li>
+                    <li className="list-disc">
+                        <strong className="text-ink">Filter</strong>（選填）：路徑對上期望值才建 run，例如 webhook 的{' '}
+                        <Mono>action</Mono> = <Mono>opened</Mono>。期望值填 JSON 陣列代表其中之一，比對數字或布林也要用陣列。
+                    </li>
+                </ul>
+
+                <p className="mt-2 font-medium text-ink">Webhook</p>
+                <p>
+                    建好後會跳出網址與 <strong className="text-ink">secret，secret 只顯示這一次</strong>
+                    ，先複製起來；外流了就按 Rotate secret 換一組。視窗裡也有 GitHub 的設定步驟和 curl 範例：
+                </p>
+                <Code>{`curl -X POST http://localhost:8000/hooks/<trigger id> \\
+  -H "Authorization: Bearer <secret>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"action": "opened", "issue": {"title": "Login is broken"}}'`}</Code>
+                <ul className="flex flex-col gap-2 pl-4">
+                    <li className="list-disc">
+                        GitHub 不能自訂 header，改用 secret 簽每個請求。Repository → Settings → Webhooks 裡 Payload URL
+                        填網址、Content type 選 <Mono>application/json</Mono>、Secret 填 secret。GitHub 要連得到這個網址，本機開發時需要另外用
+                        tunnel。
+                    </li>
+                    <li className="list-disc">
+                        同一個事件重送不會建出第二個 run：GitHub 自己會帶 delivery id，自己的腳本可以帶{' '}
+                        <Mono>Idempotency-Key</Mono> header。
+                    </li>
+                </ul>
+
+                <p className="mt-2 font-medium text-ink">After another workflow</p>
+                <ul className="flex flex-col gap-2 pl-4">
+                    <li className="list-disc">
+                        常見的用法是把一條長流程拆開，例如「分級」成功之後再跑「發摘要」，並用 Filter{' '}
+                        <Mono>result.digest.has_news</Mono> = <Mono>[true]</Mono> 只在有東西時才往下走。
+                    </li>
+                    <li className="list-disc">
+                        同一次上游 run、同一種結果只會觸發一次。上游失敗後用 Retry 修好而成功，會觸發 succeeds 那一邊。
+                    </li>
+                    <li className="list-disc">
+                        不能串成循環（A 觸發 B、B 又觸發 A），建立時就會被擋下。
+                    </li>
+                    <li className="list-disc">
+                        被觸發的 run 詳情頁，畫布兩側會用虛線節點畫出上游與下游的 run，點一下就能跳過去。
+                    </li>
+                </ul>
+                <p>
+                    觸發器沒建出 run 時（輸入不合、workflow 被改過），原因會以紅字寫在 Triggers 頁那一列，已經結束的上游 run 不受影響。
+                </p>
+            </Section>
+
             <Section id="connections" title="密鑰（Connections）">
                 <p>
                     GitHub token、Discord webhook 這類密鑰不要直接寫進步驟裡——定義會被看到、會被複製。先到{' '}
@@ -491,6 +651,7 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                                 headers：<Mono>{'{"Authorization": "Bearer {{connections.github}}"}'}</Mono>；也可以放在 url
                             </>,
                         ],
+                        [<Mono>wait_for</Mono>, '跟 http_request 一樣，可以放在 headers 與 url'],
                         [<Mono>fetch_page</Mono>, 'url（網址裡帶 key 的頁面）'],
                         [<Mono>notify</Mono>, <>webhook_url：<Mono>{'{{connections.discord}}'}</Mono></>],
                     ]}
@@ -546,6 +707,28 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                             </>,
                             '密鑰放在不允許的欄位（例如 python 的程式碼）；改用 http_request 的 headers',
                         ],
+                        [
+                            <>
+                                webhook 回 <Mono>401</Mono>
+                            </>,
+                            'secret 不對（換過 secret 之後外部系統也要更新），或 GitHub 的 Content type 沒選 application/json',
+                        ],
+                        [
+                            <>
+                                webhook 回 <Mono>204</Mono>、沒有 run
+                            </>,
+                            'Filter 沒對上。注意比對分型別：數字或布林要寫成 JSON 陣列，例如 [true]',
+                        ],
+                        [
+                            '觸發器沒反應',
+                            '看 Triggers 頁那一列的紅字；workflow 觸發器也要確認結果對得上（succeeds / fails），而且觸發器是 Enabled',
+                        ],
+                        [
+                            <>
+                                Workflow 步驟失敗：<Mono>no longer exists</Mono>
+                            </>,
+                            '被呼叫的 workflow 已經刪除。在屬性面板的 Runs workflow 換一條，或改回其他步驟',
+                        ],
                     ]}
                 />
                 <p>
@@ -600,7 +783,9 @@ echo "價格正常：$(./get_input input_1.price)"`}</Code>
                     <Mono>GET /workflows/{'{run_id}'}</Mono> 查它的狀態與 result。其他常用的：
                     <Mono>GET /definitions/{'{id}'}/runs</Mono> 列出執行紀錄、
                     <Mono>PUT /definitions/{'{id}'}</Mono> 整份取代定義（版本號自動 +1）、
-                    <Mono>POST /workflows/{'{id}'}/rerun</Mono> 與 <Mono>/retry</Mono>。
+                    <Mono>POST /workflows/{'{id}'}/rerun</Mono> 與 <Mono>/retry</Mono>。觸發器是{' '}
+                    <Mono>/triggers/</Mono>，webhook 的接收端 <Mono>POST /hooks/{'{trigger_id}'}</Mono>{' '}
+                    是唯一不用登入 token 的端點，靠觸發器自己的 secret 驗證。
                 </p>
             </Section>
         </div>

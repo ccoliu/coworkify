@@ -29,6 +29,8 @@ English | [繁體中文](README.md)
 - **Explicit output**: When a run finishes, every terminal node's result is collected into `workflows.result` instead of being scattered across individual task logs.
 - **Re-run and resume**: `POST /workflows/{id}/rerun` creates a new run from the same snapshot and input; `POST /workflows/{id}/retry` resumes the same run from the point of failure without re-running upstream steps that already succeeded.
 - **Cron-based recurring schedules**: A schedule points directly at a workflow definition and carries its own input, so the next trigger always uses the latest version of the definition. Celery Beat checks periodically and creates and dispatches runs when due, with timezone handling consistent across the app.
+- **Event triggers**: besides cron, a workflow can be started by an outside event. A webhook trigger accepts a Bearer secret or GitHub's HMAC signature, maps fields of the body onto the run's input by JSON path, and uses a filter to accept only the events you want; a redelivered event never creates a second run. A workflow trigger starts a downstream workflow when another one succeeds, fails, or finishes either way, and loops are rejected when the trigger is created.
+- **Sub-workflows**: run another definition as a single step, wait for it to finish, and hand its `result` to the steps downstream. Like `wait_for`, the wait doesn't hold a worker; if the child run fails, the error names the child run and the step that failed.
 - **Redis sliding-window rate limiting**: Request rate is tracked per logged-in user, protecting the system from any single source overwhelming it.
 - **Real-time task status push**: WebSocket + Redis Pub/Sub push task status changes instantly, no frontend polling required.
 - **Account authentication**: Register/login with bcrypt-hashed passwords and JWT session tokens; users can self-register from the frontend.
@@ -53,6 +55,7 @@ This list is defined in `app/tasks/catalog.py` and served — along with each fi
 | `agent_step` | Runs a [Codoctopus](https://github.com/ccoliu/Codoctopus) agent step — the payload carries `role` (system prompt), `instruction`, an optional `model` (`"provider:model"`), and `tools` (`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`). Setting `output_fields` (e.g. `{"fixable": "boolean", "effort": ["small", "large"]}`) switches to structured output: the result is that object itself, so downstream code can read `inputs["judge"]["fixable"]`. Requires `codoctopus` to be installed in the worker environment; see the note below. |
 | `wait_for` | A sensor: polls a URL that returns JSON with GET until a field (`path`, e.g. `workflow_runs.0.status`) equals `expected` or `timeout_seconds` runs out. Made for waiting on outside work such as CI or a deployment; see below |
 | `notify` | Sends a Discord webhook notification (title, message, link, and a level that sets the colour), usually as a workflow's last step. The webhook URL defaults to the worker's `DISCORD_WEBHOOK_URL` environment variable — it is effectively a password, so keep it out of workflow definitions |
+| `subworkflow` | Runs another workflow definition and waits for it; the result is the child run's `result`. It isn't in the `GET /tasks/types` catalog, because its fields depend on the definition it calls — in the builder you add it from the Workflows section of the left-hand palette. See below |
 
 > The worker must be able to `import codoctopus` for `agent_step` to work. For local development: `pip install -e "<codoctopus-checkout>[anthropic]"` (the `[anthropic]` extra is required — the SDK is an optional dependency; `[openai]` / `[gemini]` / `[all]` also work, or point at an `ollama:` model and install no SDK at all). CI tests against a pinned Codoctopus version (`CODOCTOPUS_REF` in `.github/workflows/ci.yml`); to match it locally, `git checkout <that SHA>` in your checkout. A weekly scheduled run tests Codoctopus `main` instead, so upstream breaking changes show up early.
 >
@@ -93,6 +96,27 @@ The result is `{"status_code", "response_body", "waited_seconds"}`, so downstrea
 > docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' < scripts/migrations/2026_11_08_task_wait_started_at.sql
 > ```
 
+### `subworkflow`: a workflow as a step
+
+When a workflow needs another one you have already built (say, "fetch issues and judge them"), you don't copy its steps over — you add a `subworkflow` step that calls it. The payload names the definition to call, plus the fields of that definition's `input_schema`:
+
+```json
+{ "key": "triage", "name": "triage", "task_type": "subworkflow",
+  "payload": { "definition_id": "<called definition id>", "repo": "apache/airflow", "hours": 1 },
+  "depends_on": ["input_1"] }
+```
+
+When the step succeeds, its result is the child run's `workflows.result` (`{terminal step key: result}`), so downstream steps read `inputs["triage"]["digest"]`.
+
+- **Waiting doesn't hold a worker**: the first execution creates a child run (`trigger_kind = "subworkflow"`) and the step moves to `waiting`. The moment the child run finishes, it wakes the step up instead of waiting for the next check; if that wake-up message is lost, a fallback check every 60 seconds and Beat's recovery job take over.
+- **Failures say where**: when the child run fails, the step fails with `Child run <id> (<name>) failed at step '<step>'`, and its downstream steps are cancelled as usual.
+- **No retries by default**: a `subworkflow` step's `max_retries` defaults to 0, because a retry creates a new child run and runs the whole thing again. Resuming with `/retry` also starts a new child run; the old one is kept and can still be inspected.
+- **Errors that can't heal fail straight away**: the called definition was deleted, the input doesn't fit its `input_schema`, or nesting goes deeper than 5 levels — retrying won't fix any of these, so they skip retries.
+- **Checked on save**: the called definition must exist and be yours, every field passed in must be declared in its `input_schema`, and it can't call back into itself, directly or indirectly.
+- **Linked on the canvas**: the step node has an "Open child run ↗" link; the child run's canvas gets a "Called by" node on the left pointing back to the parent run and step, and its detail page has a breadcrumb.
+
+![Sub-workflow step](<subworkflow-run.png>)
+
 The early demo handlers (`echo`, `heavy_computation`, `flaky_task`, `job_search`, …) are still registered in `TASK_REGISTRY` — existing rows and tests reference them — but are deliberately left out of the catalog above, so they don't appear in the frontend's task-type picker.
 
 ---
@@ -107,11 +131,12 @@ The early demo handlers (`echo`, `heavy_computation`, `flaky_task`, `job_search`
 - **Branching is just wiring**: A `condition` node exposes `true` and `false` outputs on its right edge — whichever one you drag from sets that step's `branch_of` / `branch_when` automatically, with no manual step-key bookkeeping
 - **Fan-out and fan-in**: For each / Reduce from in the property panel set up fan-out and fan-in, drawn on the canvas as dashed edges showing where the data comes from. A reduce step rejects manually drawn incoming edges (its dependencies are decided by the system after expansion)
 - **Property panel**: The right-hand form is generated from the field specs in `GET /tasks/types`; the code fields on `python` / `shell` are CodeMirror editors (syntax highlighting, auto-indent, expand-to-modal editing, and direct `.py` upload)
+- **Calling other workflows**: The Workflows section of the left-hand palette lists the definitions you can call; dragging one onto the canvas creates a `subworkflow` step, and the property panel generates input fields from the called definition's `input_schema`. The section loads only the definitions starred ★ as favorites at first and fetches the rest when you click "Show other workflows", so opening the builder doesn't pull down every definition at once. The star can be toggled from the Workflows list, the definition page, and this section
 - **Input field editor**: Above the canvas you define the workflow's `input_schema` (key / label / type / default / required / options). The run and schedule forms are generated from it, in the same shape as the field specs from `GET /tasks/types`
 - **Live validation**: The frontend mirrors the backend's `validate_dag` rules (see `frontend/src/features/workflows/validateGraph.ts`), surfacing problems on the nodes and above the canvas and blocking submission while any remain. The backend copy is still the final gate — the two must be maintained together. There are also non-blocking yellow warnings, e.g. a `python` step still using `{{steps...}}` templates in its code
 - **Keyboard shortcuts**: `Delete` removes the selected node or edge, `Esc` clears the selection, `Ctrl+D` duplicates a node, `L` re-runs auto-layout, `F` fits the view
 
-The run detail page renders **the same canvas** in read-only mode to show an actual run: nodes are coloured by task status and update live over WebSocket, the branch that wasn't taken is dimmed out as `cancelled`, and clicking any node shows its payload and error message.
+The run detail page renders **the same canvas** in read-only mode to show an actual run: nodes are coloured by task status and update live over WebSocket, the branch that wasn't taken is dimmed out as `cancelled`, and clicking any node shows its payload and error message. Runs linked by a trigger or a sub-workflow are drawn as dashed nodes on either side: on the left, the upstream or parent run that started this one; on the right, the downstream runs this one triggered when it finished. Click one to jump to it.
 
 ![Workflow run view](<workflow-run.png>)
 
@@ -183,6 +208,9 @@ Run these on the host, not inside a container. Most tests connect to the Postgre
 - `test_api_*.py`: the real app through FastAPI's `TestClient` — registration, login and JWT, rate limiting, task create / query / soft delete, definition versioning, run input validation (422), rerun vs retry, schedule CRUD and promote-to-schedule
 - `test_scheduler.py`: cron triggering, failure recording, and the Taipei timezone
 - `test_wait_for.py`: sensor matching and clamping, `waiting` using no retries, timeouts failing outright, duplicate messages not starting a second polling chain, lost delayed messages being sent again
+- `test_webhook_triggers.py` / `test_workflow_triggers.py`: webhook Bearer and HMAC authentication, filters, input mapping, delivery-id deduplication, GitHub's ping, the body size limit and rate limiting; for workflow triggers, matching the finishing status, loop detection, the chain depth cap, firing once per outcome, and a retried run that succeeds firing the success side
+- `test_subworkflows.py`: creating and waking the child run, passing its `result` on, the failure message, a retry starting a new child, errors that skip retries, the nesting cap, loop and input checks on save, and a worker crash right after creating the child not creating a second one
+- `test_definition_favorites.py`: starring changes neither the version nor the list order, the list's `favorite` filter, and someone else's definition returning 404
 - `test_handlers.py`: the SSRF guard (private ranges, cloud metadata, IPv4-mapped addresses, every redirect hop), `http_request`, `fetch_page` field extraction and size limit, `notify`, `condition`, `input`. Network and DNS are replaced; nothing connects out
 - `test_sandbox.py`: real subprocesses running `python` / `shell` steps — return values and `inputs`, `get_input`, the worker's secret env vars not being inherited, timeouts killing background children too, the memory cap. Linux only (skipped on Windows)
 - `e2e/`: replaces nothing — drives a running API + Celery worker + Redis from the outside over HTTP and WebSocket: a workflow with a branch and for_each / reduce runs to completion, a join under real concurrency runs once, `self.retry` backs off and retries, and status changes reach the WebSocket. They only run when `E2E_BASE_URL` is set (e.g. `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`); CI starts real services for them in a separate `e2e` job
@@ -220,10 +248,11 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `POST` | `/definitions/` | Create a workflow definition (`steps` plus an optional `input_schema`); it does not run by itself |
-| `GET` | `/definitions/` | Paginated list of definitions, with run counts and the latest run |
+| `GET` | `/definitions/` | Paginated list of definitions, with run counts and the latest run; `?favorite=true` lists only starred ones, `false` only the rest |
 | `GET` | `/definitions/{definition_id}` | Look up a single definition |
 | `PUT` | `/definitions/{definition_id}` | Replace the whole definition; the version bumps when `steps` or `input_schema` change |
 | `DELETE` | `/definitions/{definition_id}` | Delete a definition (its schedules go with it; past runs are kept) |
+| `PUT` / `DELETE` | `/definitions/{definition_id}/favorite` | Star / unstar as a favorite. Repeating the call is harmless, and it changes neither the version nor `updated_at` |
 | `POST` | `/definitions/{definition_id}/runs` | Run it once with an `input`, returning the new run |
 | `GET` | `/definitions/{definition_id}/runs` | Paginated list of this definition's runs |
 
@@ -231,7 +260,7 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/workflows/` | Paginated list of all runs |
-| `GET` | `/workflows/{workflow_id}` | Overall status, the live status of each node's task, and this run's `input` and final `result` |
+| `GET` | `/workflows/{workflow_id}` | Overall status, the live status of each node's task, and this run's `input` and final `result`; what started it (`trigger_kind`), and the linked `upstream_run`, `downstream_runs`, `parent_run` / `parent_step_name`. `subworkflow` steps also carry `child_workflow_id` |
 | `POST` | `/workflows/{workflow_id}/rerun` | Run again with the same snapshot and the same input, creating a **new** run; the previous one is kept intact |
 | `POST` | `/workflows/{workflow_id}/retry` | Resume the **same** run from the point of failure: the failed steps and the downstream steps they cancelled go back to pending, while upstream steps that succeeded are not re-run |
 | `POST` | `/workflows/{workflow_id}/promote-to-schedule` | Register this run's definition and input as a recurring cron schedule |
@@ -312,13 +341,59 @@ Celery Beat checks all `enabled=true` schedules once a minute; when `next_run_at
 
 A schedule's `input` is validated against the `input_schema` when it is saved, and again at trigger time. If a definition change makes the input invalid, that trigger is skipped and the reason is stored on the schedule as `last_error` / `last_error_at` (shown in red on the Schedules page), while `last_run_at` stays put — it only ever means "a run was actually created". The schedule still moves on to its next time, so other schedules are never blocked, and the next successful trigger clears the error.
 
+### Triggers (event-driven runs)
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/triggers/` | Create a trigger. For `kind: "webhook"` the response includes `secret` and `hook_path` — **the secret is shown only this once**; `kind: "workflow"` needs `source_definition_id` and `on_status` (`success` / `failed` / `any`) |
+| `GET` | `/triggers/` | List your triggers, with `last_triggered_at` and `last_error` |
+| `GET` | `/triggers/{trigger_id}` | Look up a single trigger |
+| `PATCH` | `/triggers/{trigger_id}` | Update the name, input mapping, filter, `on_status`, or enabled state |
+| `POST` | `/triggers/{trigger_id}/rotate-secret` | Issue a new webhook secret; the old one stops working immediately |
+| `DELETE` | `/triggers/{trigger_id}` | Delete a trigger; runs it already created are kept |
+| `POST` | `/hooks/{trigger_id}` | **The webhook receiver — no JWT**; it is authenticated by the trigger's own secret |
+
+Both kinds share the same settings. `input_mapping` is `{input field: JSON path}` and pulls this run's input out of the event; nothing else from the event reaches the run. `filter` is `{JSON path: expected value}` and every condition must hold for a run to be created; a list as the expected value means any of them, and comparisons are type-sensitive (as in `wait_for`). An `input_mapping` that uses a field the definition doesn't declare is rejected when you save. In the frontend, triggers are managed on the **Triggers** page in the sidebar.
+
+![Triggers page](<triggers.png>)
+
+**Webhooks**
+
+```json
+POST /triggers/
+{ "name": "on-push", "kind": "webhook", "definition_id": "<definition id>",
+  "input_mapping": { "commit": "head_commit.id", "branch": "ref" },
+  "filter": { "ref": "refs/heads/main" } }
+```
+```bash
+curl -X POST http://localhost:8000/hooks/<trigger_id> \
+  -H "Authorization: Bearer <secret>" -H "Content-Type: application/json" \
+  -d '{"ref": "refs/heads/main", "head_commit": {"id": "abc123"}}'
+```
+
+- **Two ways to authenticate**: your own scripts send `Authorization: Bearer <secret>`. GitHub can't set custom headers, so it signs the body with the secret as HMAC-SHA256 in `X-Hub-Signature-256`. On GitHub, set the Payload URL to `https://<public host>/hooks/<trigger_id>`, the Content type to `application/json`, and the Secret to the one you got when creating the trigger (local development needs a tunnel to receive it). Both are compared with `compare_digest`.
+- **Responses**: a created run returns `202 {"workflow_id"}`; a filter that doesn't match returns `204`; a wrong secret or signature returns `401`; input that doesn't fit the `input_schema` returns `422`, and the reason is also stored as the trigger's `last_error`, shown on the Triggers page. A failed authentication does **not** write `last_error`, since anyone can reach the URL.
+- **Redeliveries don't create duplicate runs**: when `X-GitHub-Delivery` or `Idempotency-Key` is present, the same value arriving again returns `200 {"workflow_id", "duplicate": true}`. If two copies arrive at the same moment, still only one run is created — a unique constraint in the database stops the second.
+- **GitHub's ping**: GitHub sends a ping when the webhook is created; it gets `200 pong` and is never treated as an event to map.
+- **Limits**: the body must be a JSON object of at most 1 MB, and each trigger accepts at most 60 calls a minute. The limit is per trigger, not per source IP, because GitHub delivers from a large pool of addresses.
+
+**After another workflow finishes**
+
+A workflow trigger starts the target workflow when a run of the source workflow finishes with the outcome in `on_status`. Its `input_mapping` and `filter` read `{"workflow_id", "status", "result", "input"}` — for example, `"items": "result.digest.items"` passes the upstream output on as downstream input, and `{"result.digest.has_news": true}` only continues when there is something to process.
+
+- **Only your own runs**: the trigger's owner must also own the upstream run.
+- **Once per outcome**: the same upstream run with the same finishing status starts the downstream workflow only once. If the upstream run failed and then succeeded after a `/retry`, the `success` side fires; if it fails again after the retry, `failed` doesn't fire a second time.
+- **No loops**: on creation, the existing workflow triggers are followed to check whether the target can lead back to the source, disabled triggers included (re-enabling one later doesn't check again). Two requests creating triggers that point at each other at the same moment could each pass that check, so there is a second safeguard: trigger chains stop at 10 levels.
+- **Downstream errors don't touch the upstream run**: if the downstream input is invalid or the run can't be created, the error is stored only as the trigger's `last_error`; the finished upstream run keeps its status.
+
+> Existing databases need `2026_11_22_workflow_triggers.sql`, `2026_11_23_workflow_completion_triggers.sql`, and `2026_11_24_definition_favorites.sql` from `scripts/migrations/` applied in that order (same command as in the `wait_for` section, with the file name swapped), then a restart of api, worker, and beat.
+
 ### Other
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/health` | API server health check |
 | `WS` | `/ws/tasks` | WebSocket for real-time task status updates (Redis Pub/Sub) |
 
-Every endpoint under `/tasks`, `/definitions`, `/workflows`, and `/schedules` requires a JWT obtained via `/auth/register` or `/auth/login`, sent in the `Authorization: Bearer <token>` header, and is rate-limited per logged-in identity via Redis sliding-window limiting. Each user only sees and changes their own resources. Since browsers can't set headers on a WebSocket, `/ws/tasks` takes the JWT in the query string: `/ws/tasks?token=<JWT>`.
+Every endpoint under `/tasks`, `/definitions`, `/workflows`, `/schedules`, and `/triggers` requires a JWT obtained via `/auth/register` or `/auth/login`, sent in the `Authorization: Bearer <token>` header, and is rate-limited per logged-in identity via Redis sliding-window limiting. Each user only sees and changes their own resources. Since browsers can't set headers on a WebSocket, `/ws/tasks` takes the JWT in the query string: `/ws/tasks?token=<JWT>`. `/hooks/{trigger_id}` is the only endpoint without a JWT; see the Triggers section above.
 
 ---
 

@@ -29,6 +29,8 @@
 - **明確的輸出**：跑完後所有終端節點的結果會收進 `workflows.result`，不用再逐一翻每個節點的執行紀錄。
 - **重跑與續跑**：`POST /workflows/{id}/rerun` 用同一份快照與輸入建立新的一次執行；`POST /workflows/{id}/retry` 則在同一次執行上從失敗點續跑，已經成功的上游不重跑。
 - **Cron 週期性排程**：排程直接指向一條 workflow 定義並帶著自己的輸入，改了定義下次觸發就用新版；由 Celery Beat 定期檢查、到點自動建立並派送，時區與應用程式設定一致。
+- **事件觸發**：除了 cron，產線也可以由外部事件啟動。webhook 觸發器接受 Bearer secret 或 GitHub 的 HMAC 簽章，用 JSON 路徑把 body 對應成 run 的輸入、用 filter 只接想要的事件，重送的同一個 delivery 不會建出第二個 run；workflow 觸發器則在另一條產線成功、失敗或任一結束時啟動下游，建立時就擋掉會繞回自己的循環。
+- **Sub-workflow**：把另一條定義當成一個步驟來跑，等它結束、把它的 `result` 交給下游。等待期間跟 `wait_for` 一樣不佔 worker；子 run 失敗時，錯誤訊息會指出是哪個子 run 的哪一步。
 - **Redis 滑動窗口限流**：每個登入使用者獨立計算請求速率，防止單一來源打爆系統。
 - **即時任務狀態推播**：透過 WebSocket 與 Redis Pub/Sub 實現任務狀態即時推播，前端無需輪詢。
 - **帳號登入認證**：註冊／登入以 bcrypt 雜湊密碼、JWT 簽發 session token，前端自助註冊帳號即可使用。
@@ -55,6 +57,7 @@
 | `agent_step` | 執行一個 [Codoctopus](https://github.com/ccoliu/Codoctopus) Agent step——payload 帶 `role`（system prompt）、`instruction`、選填的 `model`（`"provider:model"`）與 `tools`（`read_file` / `write_file` / `list_files` / `http_request` / `run_tests`）。填了 `output_fields`（例如 `{"fixable": "boolean", "effort": ["small", "large"]}`）會改用 structured output，結果直接是那個物件，下游可以 `inputs["judge"]["fixable"]` 取值。需要 worker 環境裝好 `codoctopus`，見下方安裝說明。 |
 | `wait_for` | sensor：反覆用 GET 檢查一個回傳 JSON 的網址，直到某個欄位（`path`，例如 `workflow_runs.0.status`）等於 `expected`，或超過 `timeout_seconds`。適合等 CI、部署這類外部工作，見下方說明 |
 | `notify` | 送一則 Discord webhook 通知（標題、內文、連結、等級決定顏色），通常放在 workflow 最後一步。webhook URL 預設讀 worker 的 `DISCORD_WEBHOOK_URL` 環境變數——它等同密碼，不建議寫進 workflow 定義 |
+| `subworkflow` | 執行另一條 workflow 定義、等它跑完，結果是那個子 run 的 `result`。不在 `GET /tasks/types` 的目錄裡——它的欄位取決於被呼叫的定義，建構器從左側的 Workflows 區塊加入，見下方說明 |
 > 需要 worker 能 import `codoctopus` 才能使用 `agent_step`。本機開發時 `pip install -e "<codoctopus-checkout>[anthropic]"`（`[anthropic]` 不能省，SDK 是 optional dependency；也可以用 `[openai]` / `[gemini]` / `[all]`，或指到 `ollama:` 模型完全不裝任何 SDK）。CI 測的是釘住的 Codoctopus 版本（`.github/workflows/ci.yml` 的 `CODOCTOPUS_REF`），本機要跟它一致就在 checkout 裡 `git checkout <那個 SHA>`；另有每週排程改測 Codoctopus 的 `main`，提早發現上游的破壞性改動。
 >
 > 容器化部署則不用把 codoctopus 裝進每個 worker——`agent_step` 是唯一需要它的 task_type，所以獨立路由到專屬的 `agent_step` queue，只有 `docker compose --profile agent up` 啟動的 `worker-agent` 服務（見 `Dockerfile.agent`）裝了 codoctopus，其餘 worker 完全不受影響。要用這個服務：在 `.env` 設定 `CODOCTOPUS_PATH`（指向本機 Codoctopus checkout 的路徑）與 `AGENT_STEP_DEFAULT_MODEL`，以及該 provider 需要的環境變數（例如 `ANTHROPIC_API_KEY`，或指向本地 OpenAI 相容 server 的 `OPENAI_BASE_URL`）。`agent_step` 若被排到沒有 worker-agent 在跑的環境，會一直卡在 pending，不會失敗也不會誤被其他 worker 執行。
@@ -94,6 +97,27 @@
 > docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' < scripts/migrations/2026_11_08_task_wait_started_at.sql
 > ```
 
+### `subworkflow`：把另一條 workflow 當成步驟
+
+一條產線做到一半，需要另一條已經寫好的產線（例如「抓 issue 並判斷」）時，不用把它的步驟複製過來，加一個 `subworkflow` 步驟呼叫它就好。payload 是要呼叫的定義，加上那條定義 `input_schema` 裡的欄位：
+
+```json
+{ "key": "triage", "name": "triage", "task_type": "subworkflow",
+  "payload": { "definition_id": "<被呼叫的定義 id>", "repo": "apache/airflow", "hours": 1 },
+  "depends_on": ["input_1"] }
+```
+
+步驟成功時的結果就是子 run 的 `workflows.result`（`{終端步驟 key: 結果}`），下游用 `inputs["triage"]["digest"]` 取值。
+
+- **等待不佔 worker**：第一次執行時建立子 run（`trigger_kind = "subworkflow"`），步驟轉成 `waiting`。子 run 一結束就把這個步驟叫醒，不用等下一次檢查；叫醒的訊息遺失時，有每 60 秒一次的備援檢查與 Beat 的回收機制接手。
+- **失敗會說清楚**：子 run 失敗時，步驟以 `Child run <id> (<名稱>) failed at step '<步驟>'` 失敗，下游照常被串連取消。
+- **預設不重試**：`subworkflow` 步驟的 `max_retries` 預設是 0，因為重試會建立一個新的子 run、整條重跑。用 `/retry` 續跑時也一樣是新的子 run，舊的那次保留著可以查。
+- **修不好的錯誤直接失敗**：被呼叫的定義已經刪除、輸入不合它的 `input_schema`、巢狀超過 5 層，這幾種重試也不會好，跳過重試直接失敗。
+- **存檔時就檢查**：被呼叫的定義必須存在而且是自己的、傳入的每個欄位都要在它的 `input_schema` 裡宣告過，而且不能直接或間接呼叫回自己。
+- **畫布上互相連結**：步驟節點有「Open child run ↗」連到子 run；子 run 的畫布左側多一個「Called by」節點指回父 run 與那個步驟，詳情頁上方也有麵包屑。
+
+![Sub-workflow step](<subworkflow-run.png>)
+
 早期的示範 handler（`echo`、`heavy_computation`、`flaky_task`、`job_search` 等）仍註冊在 `TASK_REGISTRY` 裡（既有資料與測試還在引用），但刻意不列進上面的目錄，前端的任務類型選單不會出現它們。
 
 ---
@@ -108,11 +132,12 @@
 - **分支即連線**：`condition` 節點右側有 `true` / `false` 兩個出口，從哪個出口拉線出去，就自動設好該步驟的 `branch_of` / `branch_when`，不需要手動對應 step key
 - **展開與收斂**：屬性面板的 For each / Reduce from 設定 fan-out 與 fan-in，畫布以虛線標出資料從哪裡來；reduce 步驟會拒絕手動拉入的連線（它的依賴由系統在展開後決定）
 - **屬性面板**：右側表單依 `GET /tasks/types` 的欄位規格動態產生；`python` / `shell` 的程式碼欄位是 CodeMirror 編輯器（語法高亮、自動縮排、可放大成 modal 編輯，也可以直接上傳 `.py`）
+- **呼叫其他 workflow**：左側面板的 Workflows 區塊列出可以呼叫的定義，拖進畫布就是一個 `subworkflow` 步驟，屬性面板依被呼叫定義的 `input_schema` 產生輸入欄位。區塊一開始只載入標了 ★ 的常用定義，其他的按「Show other workflows」才去抓，定義很多時打開建構器也不會一次拉下全部；★ 在 Workflows 列表、定義詳細頁和這個區塊都能切換
 - **輸入欄位編輯器**：畫布上方可以定義這條 workflow 的 `input_schema`（key／顯示名稱／型別／預設值／必填／選項），執行與排程的表單都照它產生，形狀與 `GET /tasks/types` 的欄位規格相同
 - **即時驗證**：前端鏡射了一份後端 `validate_dag` 的規則（見 `frontend/src/features/workflows/validateGraph.ts`），問題會即時標在節點上、列在畫布上方，有錯就擋住送出。後端那份仍是最終把關，兩邊必須同步維護。另有不擋送出的黃色警告，例如 `python` 程式碼裡仍在使用 `{{steps...}}` 模板
 - **快捷鍵**：`Delete` 刪除選取的節點或連線、`Esc` 取消選取、`Ctrl+D` 複製節點、`L` 自動排版、`F` 置中
 
-Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況：節點依 task 狀態上色、透過 WebSocket 即時更新，沒被選中的那一邊分支會淡化顯示為 `cancelled`，點任一節點可查看它的 payload 與錯誤訊息。
+Workflow 詳情頁用**同一套畫布**以唯讀模式呈現實際執行狀況：節點依 task 狀態上色、透過 WebSocket 即時更新，沒被選中的那一邊分支會淡化顯示為 `cancelled`，點任一節點可查看它的 payload 與錯誤訊息。由觸發器或 sub-workflow 串起來的 run 會以虛線節點畫在兩側：左邊是啟動這次 run 的上游 run 或父 run，右邊是這次 run 結束後觸發的下游 run，點一下就跳過去。
 
 ![Workflow run view](<workflow-run.png>)
 
@@ -184,6 +209,9 @@ python -m pytest tests -q
 - `test_api_*.py`：用 FastAPI `TestClient` 打真正的 app——註冊登入與 JWT、限流、task 的建立／查詢／軟刪除、定義的版本號、run 的輸入驗證（422）、rerun 與 retry、排程的 CRUD 與 promote-to-schedule
 - `test_scheduler.py`：cron 排程的觸發、失敗記錄、台北時區
 - `test_wait_for.py`：sensor 的比對與夾值、`waiting` 不消耗重試、逾時直接失敗、重複訊息不會變成第二條輪詢鏈、遺失的延遲訊息會被補回
+- `test_webhook_triggers.py` / `test_workflow_triggers.py`：webhook 的 Bearer 與 HMAC 驗證、filter、輸入對應、delivery id 去重、GitHub ping、body 大小與限流；workflow 觸發器的結束狀態比對、循環檢查、觸發鏈深度上限、同一個結果只觸發一次、retry 後成功會觸發 success
+- `test_subworkflows.py`：子 run 的建立與喚醒、成功時交出 `result`、失敗訊息、retry 建新的子 run、不重試的錯誤、巢狀深度上限、存檔時的循環與輸入檢查、worker 在建好子 run 後掛掉不會多建一個
+- `test_definition_favorites.py`：標 ★ 不改版本號也不改排序、列表的 `favorite` 篩選、別人的定義回 404
 - `test_handlers.py`：SSRF 防護（內網、cloud metadata、IPv4-mapped、轉址的每一跳）、`http_request`、`fetch_page` 的欄位擷取與大小上限、`notify`、`condition`、`input`。網路與 DNS 全部替換，不會真的連線
 - `test_sandbox.py`：真的起 subprocess 跑 `python` / `shell` 步驟——回傳值與 `inputs`、`get_input`、不繼承 worker 的機密環境變數、逾時連同背景子程序一起殺掉、記憶體上限。只在 Linux 上執行（Windows 會 skip）
 - `e2e/`：不替換任何東西，對一套正在跑的 API + Celery worker + Redis 從外部打 HTTP / WebSocket——分支加 for_each / reduce 的 workflow 跑到完成、併發下的 join 只執行一次、`self.retry` 的退避重試、WebSocket 推播。只在設了 `E2E_BASE_URL` 時執行（例如 `E2E_BASE_URL=http://localhost:8000 pytest tests/e2e -q`），CI 在獨立的 `e2e` job 裡起真的服務來跑
@@ -221,10 +249,11 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
 | `POST` | `/definitions/` | 建立一條 workflow 定義（`steps` + 選填的 `input_schema`），本身不執行 |
-| `GET` | `/definitions/` | 分頁列出所有定義，附帶執行次數與最近一次執行 |
+| `GET` | `/definitions/` | 分頁列出所有定義，附帶執行次數與最近一次執行；`?favorite=true` 只列標了 ★ 的、`false` 只列其他的 |
 | `GET` | `/definitions/{definition_id}` | 查詢單一定義 |
 | `PUT` | `/definitions/{definition_id}` | 整份取代；`steps` 或 `input_schema` 有變動時版本號自動 +1 |
 | `DELETE` | `/definitions/{definition_id}` | 刪除定義（它的排程一併刪除，已跑過的 run 保留） |
+| `PUT` / `DELETE` | `/definitions/{definition_id}/favorite` | 標成常用／取消。重複呼叫沒有副作用，也不會改版本號或 `updated_at` |
 | `POST` | `/definitions/{definition_id}/runs` | 帶一批 `input` 執行一次，回傳這次的 run |
 | `GET` | `/definitions/{definition_id}/runs` | 分頁列出這條定義的執行紀錄 |
 
@@ -232,7 +261,7 @@ locust -f tests/locustfile.py --host http://localhost:8000
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
 | `GET` | `/workflows/` | 分頁列出所有 run |
-| `GET` | `/workflows/{workflow_id}` | 查詢整體狀態、每個節點對應任務的即時狀態、這次的 `input` 與最終 `result` |
+| `GET` | `/workflows/{workflow_id}` | 查詢整體狀態、每個節點對應任務的即時狀態、這次的 `input` 與最終 `result`；由什麼啟動（`trigger_kind`），以及串在一起的 `upstream_run`、`downstream_runs`、`parent_run` / `parent_step_name`，`subworkflow` 步驟另有 `child_workflow_id` |
 | `POST` | `/workflows/{workflow_id}/rerun` | 用同一份快照與同一份輸入再跑一次，建立一個**新的** run，舊那次完整保留 |
 | `POST` | `/workflows/{workflow_id}/retry` | 在**同一筆** run 上從失敗點續跑：失敗的步驟與被它連帶取消的下游重設為 pending，已成功的上游不重跑 |
 | `POST` | `/workflows/{workflow_id}/promote-to-schedule` | 把這次 run 所屬的定義與輸入註冊成 cron 週期排程 |
@@ -313,13 +342,59 @@ Celery Beat 每分鐘檢查一次所有 `enabled=true` 的排程，`next_run_at`
 
 排程的 `input` 在存檔當下就依 `input_schema` 驗證，觸發時再驗一次；若定義改動後輸入不再合法，該次觸發會被跳過，原因記在排程的 `last_error` / `last_error_at`（Schedules 頁面以紅字顯示），`last_run_at` 不變——它只代表「真的建立了 run」；時間照常往前推，不會卡住其他排程，下一次觸發成功就清掉錯誤。
 
+### Triggers（事件觸發）
+| Method | Endpoint | 說明 |
+| :--- | :--- | :--- |
+| `POST` | `/triggers/` | 建立觸發器。`kind: "webhook"` 的回應會帶 `secret` 與 `hook_path`，**secret 只會顯示這一次**；`kind: "workflow"` 要給 `source_definition_id` 與 `on_status`（`success` / `failed` / `any`） |
+| `GET` | `/triggers/` | 列出自己的觸發器，含 `last_triggered_at`、`last_error` |
+| `GET` | `/triggers/{trigger_id}` | 查詢單一觸發器 |
+| `PATCH` | `/triggers/{trigger_id}` | 更新名稱、輸入對應、filter、`on_status` 或啟用狀態 |
+| `POST` | `/triggers/{trigger_id}/rotate-secret` | 換一組 webhook secret，舊的立刻失效 |
+| `DELETE` | `/triggers/{trigger_id}` | 刪除觸發器，已經建立的 run 保留 |
+| `POST` | `/hooks/{trigger_id}` | **webhook 接收端，不用 JWT**，靠觸發器自己的 secret 驗證 |
+
+兩種觸發器共用同一套設定：`input_mapping` 是 `{輸入欄位: JSON 路徑}`，從事件內容取出這次 run 的輸入，事件的其他部分不會帶進 run；`filter` 是 `{JSON 路徑: 期望值}`，每個條件都成立才建 run，期望值是 list 代表其中之一，比對分型別（跟 `wait_for` 相同）。`input_mapping` 用了定義沒宣告的欄位，存檔時就會被擋下。前端在側邊欄的 **Triggers** 頁管理。
+
+![Triggers page](<triggers.png>)
+
+**Webhook**
+
+```json
+POST /triggers/
+{ "name": "on-push", "kind": "webhook", "definition_id": "<定義 id>",
+  "input_mapping": { "commit": "head_commit.id", "branch": "ref" },
+  "filter": { "ref": "refs/heads/main" } }
+```
+```bash
+curl -X POST http://localhost:8000/hooks/<trigger_id> \
+  -H "Authorization: Bearer <secret>" -H "Content-Type: application/json" \
+  -d '{"ref": "refs/heads/main", "head_commit": {"id": "abc123"}}'
+```
+
+- **兩種驗證擇一**：自己的腳本用 `Authorization: Bearer <secret>`；GitHub 不能自訂 header，改用 secret 對 body 簽 HMAC-SHA256，放在 `X-Hub-Signature-256`。GitHub 那邊的設定是 Payload URL 填 `https://<對外網址>/hooks/<trigger_id>`、Content type 選 `application/json`、Secret 填建立時拿到的 secret（本機開發要另外用 tunnel 才收得到）。兩種都用 `compare_digest` 比對。
+- **回應碼**：建立 run 回 `202 {"workflow_id"}`；filter 不符合回 `204`；secret 或簽章錯誤回 `401`；輸入不合 `input_schema` 回 `422`，原因同時記在觸發器的 `last_error`，Triggers 頁會顯示。驗證失敗**不會**寫 `last_error`，因為任何人都打得到這個網址。
+- **重送不會重複建 run**：帶了 `X-GitHub-Delivery` 或 `Idempotency-Key` 時，同一個值第二次進來回 `200 {"workflow_id", "duplicate": true}`。兩次同時到達也只會建一個，由資料庫的 unique constraint 擋下後到的那次。
+- **GitHub 的 ping**：建立 webhook 時 GitHub 會先送一個 ping，直接回 `200 pong`，不會被當成事件拿去對應輸入。
+- **限制**：body 最大 1 MB，必須是 JSON 物件；每個觸發器每分鐘最多 60 次。限流以觸發器為單位，不看來源 IP，因為 GitHub 是從一大池 IP 送出的。
+
+**上一條產線結束後**
+
+workflow 觸發器在來源產線的 run 以 `on_status` 指定的結果結束時，啟動目標產線。`input_mapping` 和 `filter` 讀的是 `{"workflow_id", "status", "result", "input"}`，例如用 `"items": "result.digest.items"` 把上游的成品接成下游的輸入，或用 `{"result.digest.has_news": true}` 只在有東西時才往下走。
+
+- **只接自己的 run**：觸發器的擁有者必須也是上游 run 的擁有者。
+- **每個結果只觸發一次**：同一個上游 run、同一種結束狀態只會啟動一次下游。上游失敗後用 `/retry` 修好而成功，會再觸發 `success` 那一邊；retry 之後又失敗，不會再觸發一次 `failed`。
+- **不會繞成循環**：建立時沿著既有的 workflow 觸發器檢查目標會不會走回來源，停用的觸發器也算（之後重新啟用時不會再檢查）。兩個請求同時建出互相指向的觸發器時，循環檢查可能各自都通過，所以另有第二道保險：觸發鏈最多 10 層。
+- **下游出錯不影響上游**：下游的輸入不合法或建立失敗，只記在觸發器的 `last_error`，已經結束的上游 run 狀態不變。
+
+> 既有資料庫要先依序套用 `scripts/migrations/` 裡的 `2026_11_22_workflow_triggers.sql`、`2026_11_23_workflow_completion_triggers.sql`、`2026_11_24_definition_favorites.sql`（指令同上面 `wait_for` 那段，換掉檔名即可），再重啟 api / worker / beat。
+
 ### 其他
 | Method | Endpoint | 說明 |
 | :--- | :--- | :--- |
 | `GET` | `/health` | API 伺服器健康檢查 |
 | `WS` | `/ws/tasks` | WebSocket 即時任務狀態推播 (Redis Pub/Sub) |
 
-`/tasks`、`/definitions`、`/workflows`、`/schedules` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。每個使用者只看得到、改得了自己的資源。`/ws/tasks` 因為瀏覽器的 WebSocket 不能自訂 header，JWT 放在 query string：`/ws/tasks?token=<JWT>`。
+`/tasks`、`/definitions`、`/workflows`、`/schedules`、`/triggers` 底下所有端點都需要先透過 `/auth/register` 或 `/auth/login` 取得 JWT，帶在 `Authorization: Bearer <token>` header 裡才能存取，並依登入身份受 Redis 滑動窗口限流保護。每個使用者只看得到、改得了自己的資源。`/ws/tasks` 因為瀏覽器的 WebSocket 不能自訂 header，JWT 放在 query string：`/ws/tasks?token=<JWT>`。`/hooks/{trigger_id}` 是唯一不用 JWT 的端點，見上方 Triggers 一節。
 
 ---
 

@@ -7,7 +7,7 @@
     "quality_profile": "showcase",
     "repository": {
       "url": "https://github.com/ccoliu/coworkify.git",
-      "revision": "5fafe9dfe6847074e4b36f6864fd460e56c93632"
+      "revision": "9956d1967dd3c002ae9130b49935155d6da9e811"
     },
     "views": [
       {
@@ -54,19 +54,20 @@
           "auth",
           "redis"
         ],
-        "note": "所有端點都需要 JWT，依登入身份套用 Redis 滑動窗口限流；定義、run、task、排程、密鑰都只屬於建立者，別人的一律 404。/ws/tasks 用 ?token= 驗證，只推送自己的 task。"
+        "note": "除了 /hooks 之外的端點都需要 JWT，依登入身份套用 Redis 滑動窗口限流；定義、run、task、排程、觸發器、密鑰都只屬於建立者，別人的一律 404。/hooks 改用每個觸發器自己的 secret 驗證，以觸發器為單位限流。"
       },
       {
-        "id": "cron-scheduling",
-        "label": "週期性排程",
+        "id": "triggers",
+        "label": "三種觸發方式",
         "focus": [
           "beat",
+          "webhook_src",
+          "api",
           "redis",
           "worker",
-          "db",
-          "external"
+          "db"
         ],
-        "note": "Celery Beat 每 60 秒檢查到期的排程，依定義當下的內容建立新的 run——例如每小時抓 GitHub issue、交給 LLM 分級、推到 Discord 的那條流水線。"
+        "note": "Beat 每 60 秒依 cron 建立 run；GitHub 或腳本打 POST /hooks/{id}，驗過 secret 後建立 run；run 結束時 Worker 派送 fire_workflow_triggers 啟動下游產線，子 run 結束時叫醒父步驟。"
       }
     ]
   },
@@ -113,10 +114,10 @@
           "path": "app/main.py"
         },
         {
-          "path": "app/core/concurrency.py"
+          "path": "app/api/hooks.py"
         },
         {
-          "path": "app/api/workflows.py"
+          "path": "app/api/triggers.py"
         }
       ]
     },
@@ -223,10 +224,10 @@
           "path": "app/tasks/executor.py"
         },
         {
-          "path": "app/tasks/handler.py"
+          "path": "app/tasks/triggers.py"
         },
         {
-          "path": "app/tasks/sandbox.py"
+          "path": "app/tasks/subworkflow.py"
         }
       ]
     },
@@ -300,6 +301,20 @@
           "path": "app/core/connection_crypto.py"
         }
       ]
+    },
+    {
+      "id": "webhook_src",
+      "type": "external",
+      "label": "GitHub / 腳本",
+      "sublabel": "webhook 事件",
+      "pos": [
+        40,
+        380
+      ],
+      "size": [
+        170,
+        64
+      ]
     }
   ],
   "boundaries": [
@@ -307,7 +322,6 @@
       "kind": "region",
       "label": "Docker Compose 服務網路",
       "wraps": [
-        "frontend",
         "api",
         "auth",
         "db",
@@ -416,6 +430,21 @@
       "variant": "security",
       "fromSide": "bottom",
       "toSide": "left"
+    },
+    {
+      "id": "hook-api",
+      "from": "webhook_src",
+      "to": "api",
+      "label": "POST /hooks",
+      "variant": "security"
+    },
+    {
+      "id": "worker-fire",
+      "from": "worker",
+      "to": "redis",
+      "label": "觸發 / 叫醒",
+      "variant": "dashed",
+      "labelDy": 34
     }
   ],
   "cards": [
@@ -423,9 +452,9 @@
       "dot": "emerald",
       "title": "執行模型",
       "items": [
-        "定義與 run 分離，可 /rerun 重跑、/retry 從失敗點續跑；8 種任務類型，for_each / reduce_of 展開與收斂",
+        "定義與 run 分離，/rerun 重跑、/retry 從失敗點續跑；10 種任務類型，含 for_each / reduce_of 展開收斂與 subworkflow 呼叫另一條產線",
         "task 以條件式 UPDATE 認領，重複投遞只執行一次；Beat 回收 worker 消失後卡在 RUNNING 的 task",
-        "agent_step 走獨立佇列，只有 worker-agent 裝 Codoctopus，以 structured output 回傳固定欄位"
+        "agent_step 走獨立佇列，只有 worker-agent 裝 Codoctopus；產線除了 cron，也能由 webhook 或另一條產線結束時觸發"
       ]
     },
     {

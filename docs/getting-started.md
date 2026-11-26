@@ -8,9 +8,13 @@
 
 - workflow（定義）與 run（執行）的差別
 - 一個從頭建到跑完的例子：輸入、python 判斷、條件分支、兩條分支的 shell
+- 每種任務類型的欄位，包含等外部條件成立的 `wait_for`
 - 資料怎麼在步驟之間流動：python 的 `inputs`、shell 的 `./get_input`、其他類型的 `{{steps...}}` 模板
+- 把另一條 workflow 當成步驟呼叫（sub-workflow），以及用 ★ 標出常用的 workflow
 - Retry 與 Re-run 的差別
 - 設成 cron 週期排程
+- 由事件觸發：GitHub / 自己腳本的 webhook，或另一條 workflow 跑完之後
+- 密鑰（Connections）
 - 常見問題排查
 - 用 API 做同一件事（`POST /definitions/`、`POST /definitions/{id}/runs`）
 
